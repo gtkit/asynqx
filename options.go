@@ -9,6 +9,9 @@ import (
 
 const (
 	defaultRedisAddress = "127.0.0.1:6379"
+	defaultTaskTimeout  = 5 * time.Minute
+	defaultConcurrency  = 10
+	defaultRedisDB      = 0
 )
 
 type ServerOption func(o *Server)
@@ -165,5 +168,11 @@ func WithIsFailure(c asynq.Config) ServerOption {
 func WithConfig(c asynq.Config) ServerOption {
 	return func(s *Server) {
 		s.asynqConfig = c
+	}
+}
+
+func WithTaskTimeout(timeout time.Duration) ServerOption {
+	return func(s *Server) {
+		s.taskTimeout = timeout
 	}
 }

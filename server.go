@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/gtkit/json"
 
@@ -33,6 +34,8 @@ type Server struct {
 
 	entryIDs    map[string]string
 	mtxEntryIDs sync.RWMutex
+
+	taskTimeout time.Duration // 任务超时时间
 }
 
 func NewServer(opts ...ServerOption) *Server {
@@ -43,10 +46,10 @@ func NewServer(opts ...ServerOption) *Server {
 		redisOpt: asynq.RedisClientOpt{
 			Addr:     defaultRedisAddress,
 			Password: "",
-			DB:       0,
+			DB:       defaultRedisDB,
 		},
 		asynqConfig: asynq.Config{
-			Concurrency: 10,
+			Concurrency: defaultConcurrency,
 			Logger:      logger.Sugar(),
 		},
 		schedulerOpts: &asynq.SchedulerOpts{},
@@ -54,6 +57,8 @@ func NewServer(opts ...ServerOption) *Server {
 
 		entryIDs:    make(map[string]string),
 		mtxEntryIDs: sync.RWMutex{},
+
+		taskTimeout: defaultTaskTimeout,
 	}
 
 	srv.init(opts...)
@@ -89,14 +94,15 @@ func (s *Server) RegisterSubscriber(taskType string, handler MsgHandler, binder 
 				hanlererr <- err
 				return
 			}
+			hanlererr <- nil
 		}()
 		select {
 		case err := <-hanlererr:
 			return err
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
-			return nil
+		case <-time.After(s.taskTimeout):
+			return fmt.Errorf("task timeout: %s", s.taskTimeout)
 		}
 	})
 }
@@ -146,6 +152,7 @@ func (s *Server) RegisterSubscriberWithCtx(taskType string,
 				hanlererr <- err
 				return
 			}
+			hanlererr <- nil
 		}()
 
 		select {
@@ -153,8 +160,8 @@ func (s *Server) RegisterSubscriberWithCtx(taskType string,
 			return err
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
-			return nil
+		case <-time.After(s.taskTimeout):
+			return fmt.Errorf("task timeout: %s", s.taskTimeout)
 		}
 	})
 }
@@ -245,7 +252,7 @@ func (s *Server) NewWaitResultTask(typeName string, msg any, opts ...asynq.Optio
 	}
 
 	if s.asynqInspector == nil {
-		if err := s.createAsynqInspector(); err != nil {
+		if err = s.createAsynqInspector(); err != nil {
 			return err
 		}
 	}

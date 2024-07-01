@@ -328,13 +328,13 @@ func checkType(args ...interface{}) {
 	for _, arg := range args {
 		switch x := arg.(type) {
 		case int:
-			fmt.Println(arg, "is an int value: ", x)
+			logger.Info(arg, "is an int value: ", x)
 		case string:
-			fmt.Println(arg, "is a string value: ", x)
+			logger.Info(arg, "is a string value: ", x)
 		case int64:
-			fmt.Println(arg, "is an int64 value: ", x)
+			logger.Info(arg, "is an int64 value: ", x)
 		default:
-			fmt.Println(arg, "is an unknown type: ", x)
+			logger.Info(arg, "is an unknown type: ", x)
 		}
 	}
 }
