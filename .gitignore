@@ -1,0 +1,7 @@
+.idea/
+logs/
+/config/env/test.yml
+/config/env/pro.yml
+/workspace/
+.Ds_Store
+.golangci.yml
