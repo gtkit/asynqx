@@ -20,16 +20,15 @@ type ServerOption func(o *Server)
 redisOpt redis options
 */
 
-func WithAddress(addr string) ServerOption {
+func WithRedisAddr(addr string) ServerOption {
 	return func(s *Server) {
 		s.redisOpt.Addr = addr
 	}
 }
 
-func WithRedisAuth(userName, password string) ServerOption {
+func WithRedisUser(userName string) ServerOption {
 	return func(s *Server) {
 		s.redisOpt.Username = userName
-		s.redisOpt.Password = password
 	}
 }
 
@@ -174,5 +173,13 @@ func WithConfig(c asynq.Config) ServerOption {
 func WithTaskTimeout(timeout time.Duration) ServerOption {
 	return func(s *Server) {
 		s.taskTimeout = timeout
+	}
+}
+
+func WithLogger(log Logger) ServerOption {
+	return func(s *Server) {
+		s.asynqConfig.Logger = log
+		s.schedulerOpts.Logger = log
+		logger = log
 	}
 }

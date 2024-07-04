@@ -3,19 +3,20 @@ package asynqx
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"testing"
 	"time"
 
-	"github.com/gtkit/logger"
 	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/assert"
 )
 
 const (
-	localRedisAddr = "127.0.0.1:6379"
+	// localRedisAddr = "127.0.0.1:6379"
+	localRedisAddr = "10.10.10.44:6379"
 
 	testTask1        = "test_task_1"
 	testDelayTask    = "test_delay_task"
@@ -50,7 +51,7 @@ func TestNewTaskOnly(t *testing.T) {
 	var err error
 
 	srv := NewServer(
-		WithAddress(localRedisAddr),
+		WithRedisAddr(localRedisAddr),
 		// WithRedisPassword("123456"),
 	)
 
@@ -84,7 +85,7 @@ func TestNewPeriodicTaskOnly(t *testing.T) {
 	var err error
 
 	srv := NewServer(
-		WithAddress(localRedisAddr),
+		WithRedisAddr(localRedisAddr),
 		WithRedisPassword("123456"),
 	)
 
@@ -111,6 +112,7 @@ func TestNewPeriodicTaskOnly(t *testing.T) {
 }
 
 func TestDelayTask(t *testing.T) {
+	setLogger()
 	logger.Info("TestDelayTask begin")
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
@@ -119,7 +121,7 @@ func TestDelayTask(t *testing.T) {
 	var err error
 
 	srv := NewServer(
-		WithAddress(localRedisAddr),
+		WithRedisAddr(localRedisAddr),
 		// WithRedisPassword("123456"),
 	)
 
@@ -166,7 +168,7 @@ func TestPeriodicTask(t *testing.T) {
 	var err error
 
 	srv := NewServer(
-		WithAddress(localRedisAddr),
+		WithRedisAddr(localRedisAddr),
 		WithRedisPassword("123456"),
 	)
 
@@ -202,7 +204,7 @@ func TestTaskSubscribe(t *testing.T) {
 	var err error
 
 	srv := NewServer(
-		WithAddress(localRedisAddr),
+		WithRedisAddr(localRedisAddr),
 		WithRedisPassword("123456"),
 	)
 
@@ -237,7 +239,7 @@ func TestAllInOne(t *testing.T) {
 	var err error
 
 	srv := NewServer(
-		WithAddress(localRedisAddr),
+		WithRedisAddr(localRedisAddr),
 	)
 
 	err = RegisterSubscriber(srv, testTask1, handleTask1)
@@ -292,7 +294,7 @@ func TestWaitResultTask(t *testing.T) {
 	var err error
 
 	srv := NewServer(
-		WithAddress(localRedisAddr),
+		WithRedisAddr(localRedisAddr),
 	)
 
 	err = RegisterSubscriber(srv, testTask1, handleTask1)
@@ -324,22 +326,25 @@ func TestWaitResultTask(t *testing.T) {
 	t.Logf("Wait for task result...")
 }
 
-func checkType(args ...interface{}) {
-	for _, arg := range args {
-		switch x := arg.(type) {
-		case int:
-			logger.Info(arg, "is an int value: ", x)
-		case string:
-			logger.Info(arg, "is a string value: ", x)
-		case int64:
-			logger.Info(arg, "is an int64 value: ", x)
-		default:
-			logger.Info(arg, "is an unknown type: ", x)
-		}
+func checkType[T any](payload MsgPayload) {
+	switch t := payload.(type) {
+	case int:
+		log.Println(payload, "is an int value: ", t)
+	case string:
+		logger.Info(payload, "is a string value: ", t)
+	case int64:
+		log.Println(payload, "is an int64 value: ", t)
+	case *T:
+		log.Println(payload, "---> is a pointer to ", t)
+	default:
+		log.Println(payload, "is an unknown type: ", t)
 	}
+
 }
 
-func TestType(t *testing.T) {
-	var data = &TaskPayload{Message: "delay task"}
-	checkType(1, "hello", int64(100), data)
+func TestType(_ *testing.T) {
+	var payload MsgPayload
+	payload = &TaskPayload{Message: "delay task"}
+	checkType[MsgPayload](payload)
+	checkType[TaskPayload](payload)
 }

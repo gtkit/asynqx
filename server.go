@@ -9,7 +9,6 @@ import (
 
 	"github.com/gtkit/json"
 
-	"github.com/gtkit/logger"
 	"github.com/hibiken/asynq"
 )
 
@@ -31,7 +30,6 @@ type Server struct {
 	schedulerOpts *asynq.SchedulerOpts // scheduler options
 
 	// 记录每个任务的唯一ID，用于后续查询任务的结果
-
 	entryIDs    map[string]string
 	mtxEntryIDs sync.RWMutex
 
@@ -50,7 +48,6 @@ func NewServer(opts ...ServerOption) *Server {
 		},
 		asynqConfig: asynq.Config{
 			Concurrency: defaultConcurrency,
-			Logger:      logger.Sugar(),
 		},
 		schedulerOpts: &asynq.SchedulerOpts{},
 		mux:           asynq.NewServeMux(),
@@ -71,31 +68,31 @@ func (s *Server) Name() string {
 }
 
 // RegisterSubscriber register task subscriber.
-func (s *Server) RegisterSubscriber(taskType string, handler MsgHandler, binder Binder) error {
+func (s *Server) RegisterSubscriber(taskType string, msgHandler MsgHandler, binder Binder) error {
 	return s.handleFunc(taskType, func(ctx context.Context, task *asynq.Task) error {
 		hanlererr := make(chan error, 1)
-		go func() {
+		go func(t *asynq.Task) {
 			var payload MsgPayload // any type
 			if binder != nil {
 				payload = binder()
 			} else {
-				payload = task.Payload()
+				payload = t.Payload()
 			}
 
-			if err := json.Unmarshal(task.Payload(), payload); err != nil {
+			if err := json.Unmarshal(t.Payload(), payload); err != nil {
 				logger.Errorf("unmarshal Msg failed: %s", err)
 				hanlererr <- err
 				return
 			}
 
 			// 调用具体的处理函数
-			if err := handler(task.Type(), payload); err != nil {
+			if err := msgHandler(t.Type(), payload); err != nil {
 				logger.Errorf("handle Msg failed: %s", err)
 				hanlererr <- err
 				return
 			}
 			hanlererr <- nil
-		}()
+		}(task)
 		select {
 		case err := <-hanlererr:
 			return err
@@ -109,19 +106,26 @@ func (s *Server) RegisterSubscriber(taskType string, handler MsgHandler, binder 
 
 // RegisterSubscriber register task subscriber
 // handler: func(string, MsgPayload) error 具体处理任务的函数
-func RegisterSubscriber[T any](srv *Server, taskType string, handler TaskHandler[T]) error {
-	return srv.RegisterSubscriber(taskType,
+func RegisterSubscriber[T any](srv *Server, taskType string, taskHandler TaskHandler[T]) error {
+	return srv.RegisterSubscriber(
+		// 任务名称
+		taskType,
+
+		// msgHandler: func(string, MsgPayload) error 调用处理任务内容的具体函数
 		func(taskType string, payload MsgPayload) error {
 			switch t := payload.(type) {
 			case *T:
-				return handler(taskType, t)
+				return taskHandler(taskType, t)
 			default:
 				logger.Error("invalid payload struct type:", t)
 				return errors.New("invalid payload struct type")
 			}
 		},
+
+		// binder: func() any 绑定任务参数的结构体
 		func() any {
 			var t T
+			// logger.Infof("bider t type: %T\n", &t)
 			return &t
 		},
 	)
@@ -129,31 +133,31 @@ func RegisterSubscriber[T any](srv *Server, taskType string, handler TaskHandler
 
 // RegisterSubscriberWithCtx register task subscriber with context.
 func (s *Server) RegisterSubscriberWithCtx(taskType string,
-	handler MsgHandlerWithCtx,
+	msgHandler MsgHandlerWithCtx,
 	binder Binder) error {
 	return s.handleFunc(taskType, func(ctx context.Context, task *asynq.Task) error {
 		hanlererr := make(chan error, 1)
-		go func() {
+		go func(t *asynq.Task) {
 			var payload MsgPayload
 			if binder != nil {
 				payload = binder()
 			} else {
-				payload = task.Payload()
+				payload = t.Payload()
 			}
 
-			if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+			if err := json.Unmarshal(t.Payload(), payload); err != nil {
 				logger.Errorf("unmarshal Msg failed: %s", err)
 				hanlererr <- err
 				return
 			}
 
-			if err := handler(ctx, task.Type(), payload); err != nil {
+			if err := msgHandler(ctx, t.Type(), payload); err != nil {
 				logger.Errorf("handle Msg failed: %s", err)
 				hanlererr <- err
 				return
 			}
 			hanlererr <- nil
-		}()
+		}(task)
 
 		select {
 		case err := <-hanlererr:
@@ -167,17 +171,23 @@ func (s *Server) RegisterSubscriberWithCtx(taskType string,
 }
 
 // RegisterSubscriberWithCtx register task subscriber with context.
-func RegisterSubscriberWithCtx[T any](srv *Server, taskType string, handler TaskHandlerWithCtx[T]) error {
-	return srv.RegisterSubscriberWithCtx(taskType,
+func RegisterSubscriberWithCtx[T any](srv *Server, taskType string, taskHandler TaskHandlerWithCtx[T]) error {
+	return srv.RegisterSubscriberWithCtx(
+		// 任务名称
+		taskType,
+
+		// msgHandler: func(context.Context, string, MsgPayload) error 调用处理任务内容的具体函数
 		func(ctx context.Context, taskType string, payload MsgPayload) error {
 			switch t := payload.(type) {
 			case *T:
-				return handler(ctx, taskType, t)
+				return taskHandler(ctx, taskType, t)
 			default:
 				logger.Error("invalid payload struct type:", t)
 				return errors.New("invalid payload struct type")
 			}
 		},
+
+		// binder: func() any 绑定任务参数的结构体
 		func() any {
 			var t T
 			return &t
@@ -298,6 +308,7 @@ func (s *Server) NewPeriodicTask(cronSpec, typeName string, msg any, opts ...asy
 
 	payload, err := json.Marshal(msg)
 	if err != nil {
+		logger.Errorf("[%s] Marshal payload failed: %s", typeName, err.Error())
 		return "", err
 	}
 
@@ -444,6 +455,11 @@ func (s *Server) Stop(_ context.Context) error {
 func (s *Server) init(opts ...ServerOption) {
 	for _, o := range opts {
 		o(s)
+	}
+	if logger == nil {
+		setLogger()
+		s.asynqConfig.Logger = logger
+		s.schedulerOpts.Logger = logger
 	}
 	var err error
 	if err = s.createAsynqServer(); err != nil {
