@@ -111,11 +111,17 @@ func TestNewPeriodicTaskOnly(t *testing.T) {
 	// <-interrupt
 }
 
+func sigs() []os.Signal {
+	return []os.Signal{
+		syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT,
+	}
+}
+
 func TestDelayTask(t *testing.T) {
 	setLogger()
 	logger.Info("TestDelayTask begin")
 	interrupt := make(chan os.Signal, 1)
-	signal.Notify(interrupt, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	signal.Notify(interrupt, sigs()...)
 
 	ctx := context.Background()
 	var err error

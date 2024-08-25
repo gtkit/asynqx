@@ -63,6 +63,38 @@ func NewServer(opts ...ServerOption) *Server {
 	return srv
 }
 
+func (s *Server) init(opts ...ServerOption) {
+	for _, o := range opts {
+		o(s)
+	}
+	if logger == nil {
+		setLogger()
+		s.asynqConfig.Logger = logger
+		s.schedulerOpts.Logger = logger
+	}
+	var err error
+	if err = s.createAsynqServer(); err != nil {
+		s.err = err
+		logger.Error("create asynq server failed:", err)
+	}
+	if err = s.createAsynqClient(); err != nil {
+		s.err = err
+		logger.Error("create asynq client failed:", err)
+	}
+
+	if err = s.createAsynqScheduler(); err != nil {
+		s.err = err
+		logger.Error("create asynq scheduler failed:", err)
+	}
+
+	// Inspector是一个客户端接口，用于检查和更改 队列和任务.
+	// inspector.CancelProcessing(id) 可取消指定 任务id 的任务.
+	if err = s.createAsynqInspector(); err != nil {
+		s.err = err
+		logger.Error("create asynq inspector failed:", err)
+	}
+}
+
 func (s *Server) Name() string {
 	return "asynq"
 }
@@ -450,34 +482,6 @@ func (s *Server) Stop(_ context.Context) error {
 	}
 
 	return nil
-}
-
-func (s *Server) init(opts ...ServerOption) {
-	for _, o := range opts {
-		o(s)
-	}
-	if logger == nil {
-		setLogger()
-		s.asynqConfig.Logger = logger
-		s.schedulerOpts.Logger = logger
-	}
-	var err error
-	if err = s.createAsynqServer(); err != nil {
-		s.err = err
-		logger.Error("create asynq server failed:", err)
-	}
-	if err = s.createAsynqClient(); err != nil {
-		s.err = err
-		logger.Error("create asynq client failed:", err)
-	}
-	if err = s.createAsynqScheduler(); err != nil {
-		s.err = err
-		logger.Error("create asynq scheduler failed:", err)
-	}
-	if err = s.createAsynqInspector(); err != nil {
-		s.err = err
-		logger.Error("create asynq inspector failed:", err)
-	}
 }
 
 // createAsynqServer create asynq server.
