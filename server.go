@@ -73,15 +73,19 @@ func (s *Server) init(opts ...ServerOption) {
 		s.schedulerOpts.Logger = logger
 	}
 	var err error
+	// 创建 asynq server
 	if err = s.createAsynqServer(); err != nil {
 		s.err = err
 		logger.Error("create asynq server failed:", err)
 	}
+
+	// 创建 asynq client
 	if err = s.createAsynqClient(); err != nil {
 		s.err = err
 		logger.Error("create asynq client failed:", err)
 	}
 
+	// 创建 asynq 定时任务
 	if err = s.createAsynqScheduler(); err != nil {
 		s.err = err
 		logger.Error("create asynq scheduler failed:", err)
@@ -139,27 +143,27 @@ func (s *Server) RegisterSubscriber(taskType string, msgHandler MsgHandler, bind
 // RegisterSubscriber register task subscriber
 // handler: func(string, MsgPayload) error 具体处理任务的函数
 func RegisterSubscriber[T any](srv *Server, taskType string, taskHandler TaskHandler[T]) error {
+	msgHandler := func(taskType string, payload MsgPayload) error {
+		switch t := payload.(type) {
+		case *T:
+			return taskHandler(taskType, t)
+		default:
+			logger.Error("invalid payload struct type:", t)
+			return errors.New("invalid payload struct type")
+		}
+	}
+	binder := func() any {
+		var t T
+		// logger.Infof("bider t type: %T\n", &t)
+		return &t
+	}
 	return srv.RegisterSubscriber(
 		// 任务名称
 		taskType,
-
 		// msgHandler: func(string, MsgPayload) error 调用处理任务内容的具体函数
-		func(taskType string, payload MsgPayload) error {
-			switch t := payload.(type) {
-			case *T:
-				return taskHandler(taskType, t)
-			default:
-				logger.Error("invalid payload struct type:", t)
-				return errors.New("invalid payload struct type")
-			}
-		},
-
+		msgHandler,
 		// binder: func() any 绑定任务参数的结构体
-		func() any {
-			var t T
-			// logger.Infof("bider t type: %T\n", &t)
-			return &t
-		},
+		binder,
 	)
 }
 
