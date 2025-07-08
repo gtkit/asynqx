@@ -20,4 +20,4 @@ type MsgHandlerMap map[string]HandlerData
 
 type TaskHandler[T any] func(string, *T) error
 
-type TaskHandlerWithCtx[T any] func(context.Context, string, *T) error
+type TaskHandlerWithCtx[T any] func(ctx context.Context, taskType string, taskData *T) error

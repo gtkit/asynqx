@@ -168,9 +168,11 @@ func RegisterSubscriber[T any](srv *Server, taskType string, taskHandler TaskHan
 }
 
 // RegisterSubscriberWithCtx register task subscriber with context.
-func (s *Server) RegisterSubscriberWithCtx(taskType string,
+func (s *Server) RegisterSubscriberWithCtx(
+	taskType string,
 	msgHandler MsgHandlerWithCtx,
-	binder Binder) error {
+	binder Binder,
+) error {
 	return s.handleFunc(taskType, func(ctx context.Context, task *asynq.Task) error {
 		hanlererr := make(chan error, 1)
 		go func(t *asynq.Task) {
@@ -209,10 +211,10 @@ func (s *Server) RegisterSubscriberWithCtx(taskType string,
 // RegisterSubscriberWithCtx register task subscriber with context.
 func RegisterSubscriberWithCtx[T any](srv *Server, taskType string, taskHandler TaskHandlerWithCtx[T]) error {
 	return srv.RegisterSubscriberWithCtx(
-		// 任务名称
+		// 参数1: 任务名称
 		taskType,
 
-		// msgHandler: func(context.Context, string, MsgPayload) error 调用处理任务内容的具体函数
+		// 参数2: msgHandler: func(ctx context.Context, taskType string, payload MsgPayload) error 调用处理任务内容的具体函数
 		func(ctx context.Context, taskType string, payload MsgPayload) error {
 			switch t := payload.(type) {
 			case *T:
@@ -223,7 +225,8 @@ func RegisterSubscriberWithCtx[T any](srv *Server, taskType string, taskHandler 
 			}
 		},
 
-		// binder: func() any 绑定任务参数的结构体
+		// 参数3: binder: func() any 绑定任务参数的结构体.
+		// 动态地创建一个与任务消息类型匹配的结构体实例, 用于接收和解析任务消息的内容.
 		func() any {
 			var t T
 			return &t
