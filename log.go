@@ -4,6 +4,7 @@ import (
 	"log"
 
 	zap "github.com/gtkit/logger"
+	"github.com/hibiken/asynq"
 )
 
 // Logger is the interface for logging.
@@ -11,26 +12,17 @@ var logger Logger
 
 // SetLogger sets the logger for asynq.
 type Logger interface {
-	Debug(args ...any)
-	Info(args ...any)
-	Warn(args ...any)
-	Error(args ...any)
-	Fatal(args ...any)
+	asynq.Logger
 	Debugf(template string, args ...any)
-	Infof(template string, args ...any)
-	Warnf(template string, args ...any)
+	Infof(format string, args ...any)
 	Errorf(template string, args ...any)
-	Fatalf(template string, args ...any)
 }
 
-func setLogger() {
+func initLogger(s *Server) {
 	log.Println("No logger set, using default logger [zap-logger].")
 	if zap.Zlog() == nil {
-		zap.NewZap(
-			zap.WithConsole(true),
-		)
-		logger = zap.Sugar()
-		return
+		zap.NewZap(zap.WithConsole(true))
 	}
 	logger = zap.Sugar()
+	s.asynqConfig.Logger, s.schedulerOpts.Logger = logger, logger
 }
