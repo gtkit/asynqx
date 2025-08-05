@@ -19,7 +19,7 @@ type Logger interface {
 }
 
 func initLogger(s *Server) {
-	log.Println("No logger set, using default logger [zap-logger].")
+	log.Println("asynqx: No logger set, using default logger [zap-logger].")
 	if zap.Zlog() == nil {
 		zap.NewZap(zap.WithConsole(true))
 	}
