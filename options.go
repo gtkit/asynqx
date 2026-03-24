@@ -7,179 +7,218 @@ import (
 	"github.com/hibiken/asynq"
 )
 
-const (
-	defaultRedisAddress = "127.0.0.1:6379"
-	defaultTaskTimeout  = 5 * time.Minute
-	defaultConcurrency  = 10
-	defaultRedisDB      = 0
-)
+// ConfigOption 表示作用于共享基础配置的选项。
+type ConfigOption func(*Config) error
 
-type ServerOption func(o *Server)
+// BrokerOption 表示 Broker 使用的配置选项。
+type BrokerOption = ConfigOption
 
-/**
-redisOpt redis options
-*/
+// WorkerOption 表示 Worker 使用的配置选项。
+type WorkerOption = ConfigOption
 
-func WithRedisAddr(addr string) ServerOption {
-	return func(s *Server) {
-		s.redisOpt.Addr = addr
+// SchedulerOption 表示 Scheduler 使用的配置选项。
+type SchedulerOption = ConfigOption
+
+// WithRedisAddrOption 设置共享配置中的 Redis 地址。
+func WithRedisAddrOption(addr string) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.Redis.Addr = addr
+		return nil
 	}
 }
 
-func WithRedisUser(userName string) ServerOption {
-	return func(s *Server) {
-		s.redisOpt.Username = userName
+// WithRedisUserOption 设置共享配置中的 Redis 用户名。
+func WithRedisUserOption(userName string) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.Redis.Username = userName
+		return nil
 	}
 }
 
-func WithRedisPassword(password string) ServerOption {
-	return func(s *Server) {
-		s.redisOpt.Password = password
+// WithRedisPasswordOption 设置共享配置中的 Redis 密码。
+func WithRedisPasswordOption(password string) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.Redis.Password = password
+		return nil
 	}
 }
 
-func WithRedisDB(db int) ServerOption {
-	return func(s *Server) {
-		s.redisOpt.DB = db
+// WithRedisDBOption 设置共享配置中的 Redis 数据库编号。
+func WithRedisDBOption(db int) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.Redis.DB = db
+		return nil
 	}
 }
 
-func WithRedisPoolSize(size int) ServerOption {
-	return func(s *Server) {
-		s.redisOpt.PoolSize = size
+// WithRedisPoolSizeOption 设置共享配置中的 Redis 连接池大小。
+func WithRedisPoolSizeOption(size int) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.Redis.PoolSize = size
+		return nil
 	}
 }
 
-func WithDialTimeout(timeout time.Duration) ServerOption {
-	return func(s *Server) {
-		s.redisOpt.DialTimeout = timeout
+// WithDialTimeoutOption 设置共享配置中的 Redis 拨号超时。
+func WithDialTimeoutOption(timeout time.Duration) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.Redis.DialTimeout = timeout
+		return nil
 	}
 }
 
-func WithReadTimeout(timeout time.Duration) ServerOption {
-	return func(s *Server) {
-		s.redisOpt.ReadTimeout = timeout
+// WithReadTimeoutOption 设置共享配置中的 Redis 读取超时。
+func WithReadTimeoutOption(timeout time.Duration) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.Redis.ReadTimeout = timeout
+		return nil
 	}
 }
 
-func WithWriteTimeout(timeout time.Duration) ServerOption {
-	return func(s *Server) {
-		s.redisOpt.WriteTimeout = timeout
+// WithWriteTimeoutOption 设置共享配置中的 Redis 写入超时。
+func WithWriteTimeoutOption(timeout time.Duration) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.Redis.WriteTimeout = timeout
+		return nil
 	}
 }
 
-func WithTLSConfig(c *tls.Config) ServerOption {
-	return func(s *Server) {
-		s.redisOpt.TLSConfig = c
+// WithTLSConfigOption 设置共享配置中的 Redis TLS 配置。
+func WithTLSConfigOption(cfg *tls.Config) ConfigOption {
+	return func(target *Config) error {
+		target.Redis.TLSConfig = cloneTLSConfig(cfg)
+		return nil
 	}
 }
 
-/*
-*
-	anynq config options
-*/
-
-func WithConcurrency(concurrency int) ServerOption {
-	return func(s *Server) {
-		s.asynqConfig.Concurrency = concurrency
+// WithConcurrencyOption 设置共享配置中的并发数。
+func WithConcurrencyOption(concurrency int) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.Concurrency = concurrency
+		return nil
 	}
 }
 
-func WithQueues(queues map[string]int) ServerOption {
-	return func(s *Server) {
-		s.asynqConfig.Queues = queues
+// WithQueuesOption 设置共享配置中的队列权重，并复制底层 map。
+func WithQueuesOption(queues map[string]int) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.Queues = copyQueueWeights(queues)
+		return nil
 	}
 }
 
-func WithRetryDelayFunc(fn asynq.RetryDelayFunc) ServerOption {
-	return func(s *Server) {
-		s.asynqConfig.RetryDelayFunc = fn
+// WithRetryDelayFuncOption 设置共享配置中的重试延迟函数。
+func WithRetryDelayFuncOption(fn asynq.RetryDelayFunc) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.RetryDelayFunc = fn
+		return nil
 	}
 }
 
-func WithStrictPriority(val bool) ServerOption {
-	return func(s *Server) {
-		s.asynqConfig.StrictPriority = val
+// WithStrictPriorityOption 设置共享配置中的严格优先级。
+func WithStrictPriorityOption(val bool) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.StrictPriority = val
+		return nil
 	}
 }
 
-func WithErrorHandler(fn asynq.ErrorHandler) ServerOption {
-	return func(s *Server) {
-		s.asynqConfig.ErrorHandler = fn
+// WithErrorHandlerOption 设置共享配置中的错误处理器。
+func WithErrorHandlerOption(fn asynq.ErrorHandler) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.ErrorHandler = fn
+		return nil
 	}
 }
 
-func WithHealthCheckFunc(fn func(error)) ServerOption {
-	return func(s *Server) {
-		s.asynqConfig.HealthCheckFunc = fn
+// WithHealthCheckFuncOption 设置共享配置中的健康检查回调。
+func WithHealthCheckFuncOption(fn func(error)) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.HealthCheckFunc = fn
+		return nil
 	}
 }
 
-func WithHealthCheckInterval(tm time.Duration) ServerOption {
-	return func(s *Server) {
-		s.asynqConfig.HealthCheckInterval = tm
+// WithHealthCheckIntervalOption 设置共享配置中的健康检查间隔。
+func WithHealthCheckIntervalOption(interval time.Duration) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.HealthCheckInterval = interval
+		return nil
 	}
 }
 
-func WithDelayedTaskCheckInterval(tm time.Duration) ServerOption {
-	return func(s *Server) {
-		s.asynqConfig.DelayedTaskCheckInterval = tm
+// WithDelayedTaskCheckIntervalOption 设置共享配置中的延迟任务检查间隔。
+func WithDelayedTaskCheckIntervalOption(interval time.Duration) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.DelayedTaskCheckInterval = interval
+		return nil
 	}
 }
 
-func WithGroupGracePeriod(tm time.Duration) ServerOption {
-	return func(s *Server) {
-		s.asynqConfig.GroupGracePeriod = tm
+// WithGroupGracePeriodOption 设置共享配置中的聚合宽限期。
+func WithGroupGracePeriodOption(interval time.Duration) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.GroupGracePeriod = interval
+		return nil
 	}
 }
 
-func WithGroupMaxDelay(tm time.Duration) ServerOption {
-	return func(s *Server) {
-		s.asynqConfig.GroupMaxDelay = tm
+// WithGroupMaxDelayOption 设置共享配置中的聚合最大延迟。
+func WithGroupMaxDelayOption(interval time.Duration) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.GroupMaxDelay = interval
+		return nil
 	}
 }
 
-func WithGroupMaxSize(sz int) ServerOption {
-	return func(s *Server) {
-		s.asynqConfig.GroupMaxSize = sz
+// WithGroupMaxSizeOption 设置共享配置中的聚合最大尺寸。
+func WithGroupMaxSizeOption(size int) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.GroupMaxSize = size
+		return nil
 	}
 }
 
-func WithMiddleware(m ...asynq.MiddlewareFunc) ServerOption {
-	return func(o *Server) {
-		o.mux.Use(m...)
+// WithMiddlewareOption 设置共享配置中的中间件。
+func WithMiddlewareOption(middlewares ...asynq.MiddlewareFunc) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.Middleware = append([]asynq.MiddlewareFunc(nil), middlewares...)
+		return nil
 	}
 }
 
-func WithLocation(name string) ServerOption {
-	return func(s *Server) {
-		loc, _ := time.LoadLocation(name)
-		s.schedulerOpts.Location = loc
+// WithLocationOption 设置共享配置中的时区位置。
+func WithLocationOption(name string) ConfigOption {
+	return func(cfg *Config) error {
+		loc, err := time.LoadLocation(name)
+		if err != nil {
+			return invalidConfigurationError("location", err.Error())
+		}
+		cfg.Location = loc
+		return nil
 	}
 }
 
-func WithIsFailure(c asynq.Config) ServerOption {
-	return func(s *Server) {
-		s.asynqConfig.IsFailure = c.IsFailure
+// WithIsFailureOption 设置共享配置中的失败判定函数。
+func WithIsFailureOption(fn func(error) bool) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.IsFailure = fn
+		return nil
 	}
 }
 
-func WithConfig(c asynq.Config) ServerOption {
-	return func(s *Server) {
-		s.asynqConfig = c
+// WithTaskTimeoutOption 设置共享配置中的默认任务超时时间。
+func WithTaskTimeoutOption(timeout time.Duration) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.TaskTimeout = timeout
+		return nil
 	}
 }
 
-func WithTaskTimeout(timeout time.Duration) ServerOption {
-	return func(s *Server) {
-		s.taskTimeout = timeout
-	}
-}
-
-func WithLogger(log Logger) ServerOption {
-	return func(s *Server) {
-		s.asynqConfig.Logger = log
-		s.schedulerOpts.Logger = log
-		logger = log
+// WithLoggerOption 设置共享配置中的日志实现。
+func WithLoggerOption(log Logger) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.Logger = log
+		return nil
 	}
 }

@@ -1,0 +1,287 @@
+package asynqx
+
+import (
+	"context"
+	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
+
+	"github.com/hibiken/asynq"
+)
+
+const (
+	schedulerStateIdle int32 = iota
+	schedulerStateStarting
+	schedulerStateRunning
+	schedulerStateStopping
+	schedulerStateStopped
+)
+
+// Scheduler 负责管理周期任务的注册、启动与关闭生命周期。
+type Scheduler struct {
+	cfg              Config
+	runner           schedulerRunner
+	state            atomic.Int32
+	activeOperations atomic.Int64
+	stopped          chan struct{}
+	stoppedOnce      sync.Once
+}
+
+type schedulerRunner interface {
+	Register(spec string, task *asynq.Task, opts ...asynq.Option) (string, error)
+	Unregister(entryID string) error
+	Start() error
+	Shutdown()
+}
+
+type schedulerRunnerFactory func(Config) (schedulerRunner, error)
+
+// NewScheduler 基于共享配置创建 Scheduler，并初始化底层 asynq 调度器。
+func NewScheduler(opts ...SchedulerOption) (*Scheduler, error) {
+	cfg, err := NewConfig(opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return newScheduler(cfg, defaultSchedulerRunnerFactory)
+}
+
+func newScheduler(cfg Config, factory schedulerRunnerFactory) (*Scheduler, error) {
+	if factory == nil {
+		return nil, invalidConfigurationError("scheduler.runner_factory", "must not be nil")
+	}
+
+	runner, err := factory(cfg.clone())
+	if err != nil {
+		return nil, err
+	}
+	if runner == nil {
+		return nil, invalidConfigurationError("scheduler.runner", "must not be nil")
+	}
+
+	scheduler := &Scheduler{
+		cfg:     cfg.clone(),
+		runner:  runner,
+		stopped: make(chan struct{}),
+	}
+	scheduler.state.Store(schedulerStateIdle)
+
+	return scheduler, nil
+}
+
+var defaultSchedulerRunnerFactory = func(cfg Config) (schedulerRunner, error) {
+	runner := asynq.NewScheduler(cfg.Redis, cfg.schedulerOptions())
+	if runner == nil {
+		return nil, invalidConfigurationError("scheduler.runner", "must not be nil")
+	}
+	return runner, nil
+}
+
+// Register 注册一个周期任务，并返回底层调度器生成的 entryID。
+func (s *Scheduler) Register(ctx context.Context, spec, taskType string, payload any, opts ...TaskOption) (string, error) {
+	if s == nil {
+		return "", invalidArgumentError("scheduler", "must not be nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(spec) == "" {
+		return "", invalidArgumentError("spec", "must not be empty")
+	}
+	if strings.TrimSpace(taskType) == "" {
+		return "", invalidArgumentError("task_type", "must not be empty")
+	}
+	if err := s.beginOperation(); err != nil {
+		return "", err
+	}
+	defer s.endOperation()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	body, err := marshalPayload(payload)
+	if err != nil {
+		return "", err
+	}
+
+	asynqOpts, err := buildTaskOptions(opts...)
+	if err != nil {
+		return "", err
+	}
+	asynqOpts = applyDefaultTaskTimeout(asynqOpts, s.cfg.TaskTimeout)
+
+	task := asynq.NewTask(taskType, body)
+	return s.runner.Register(spec, task, asynqOpts...)
+}
+
+// Unregister 按 entryID 移除一个已经注册的周期任务。
+func (s *Scheduler) Unregister(ctx context.Context, entryID string) error {
+	if s == nil {
+		return invalidArgumentError("scheduler", "must not be nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(entryID) == "" {
+		return invalidArgumentError("entry_id", "must not be empty")
+	}
+	if err := s.beginOperation(); err != nil {
+		return err
+	}
+	defer s.endOperation()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return s.runner.Unregister(entryID)
+}
+
+// Start 启动底层调度器；成功后 Scheduler 进入运行态。
+func (s *Scheduler) Start(ctx context.Context) error {
+	if s == nil {
+		return invalidArgumentError("scheduler", "must not be nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !s.state.CompareAndSwap(schedulerStateIdle, schedulerStateStarting) {
+		switch s.state.Load() {
+		case schedulerStateStopping, schedulerStateStopped:
+			return ErrSchedulerStopped
+		default:
+			return ErrSchedulerAlreadyRunning
+		}
+	}
+
+	if err := s.runner.Start(); err != nil {
+		if s.state.Load() == schedulerStateStopping {
+			s.finishStop()
+			return ErrSchedulerStopped
+		}
+		s.state.Store(schedulerStateIdle)
+		return err
+	}
+
+	if s.state.CompareAndSwap(schedulerStateStarting, schedulerStateRunning) {
+		return nil
+	}
+	if s.state.Load() == schedulerStateStopping {
+		s.finishStop()
+		return ErrSchedulerStopped
+	}
+
+	return nil
+}
+
+// Run 启动调度器，并在 ctx 取消后触发 Shutdown。
+func (s *Scheduler) Run(ctx context.Context) error {
+	if s == nil {
+		return invalidArgumentError("scheduler", "must not be nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if err := s.Start(ctx); err != nil {
+		return err
+	}
+
+	<-ctx.Done()
+	return s.Shutdown(context.Background())
+}
+
+// Shutdown 关闭调度器；重复调用是安全的。
+func (s *Scheduler) Shutdown(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	for {
+		switch s.state.Load() {
+		case schedulerStateIdle:
+			if s.state.CompareAndSwap(schedulerStateIdle, schedulerStateStopping) {
+				s.finishStop()
+				return nil
+			}
+		case schedulerStateStarting:
+			if s.state.CompareAndSwap(schedulerStateStarting, schedulerStateStopping) {
+				return s.waitStopped(ctx)
+			}
+		case schedulerStateRunning:
+			if s.state.CompareAndSwap(schedulerStateRunning, schedulerStateStopping) {
+				go s.finishStop()
+				return s.waitStopped(ctx)
+			}
+		case schedulerStateStopping, schedulerStateStopped:
+			return s.waitStopped(ctx)
+		}
+	}
+}
+
+func (s *Scheduler) beginOperation() error {
+	for {
+		switch s.state.Load() {
+		case schedulerStateIdle, schedulerStateStarting, schedulerStateRunning:
+		default:
+			return ErrSchedulerStopped
+		}
+
+		current := s.activeOperations.Load()
+		if !s.activeOperations.CompareAndSwap(current, current+1) {
+			continue
+		}
+
+		switch s.state.Load() {
+		case schedulerStateIdle, schedulerStateStarting, schedulerStateRunning:
+			return nil
+		default:
+			s.activeOperations.Add(-1)
+			return ErrSchedulerStopped
+		}
+	}
+}
+
+func (s *Scheduler) endOperation() {
+	s.activeOperations.Add(-1)
+}
+
+func (s *Scheduler) waitActiveOperations() {
+	for s.activeOperations.Load() > 0 {
+		runtime.Gosched()
+	}
+}
+
+func (s *Scheduler) finishStop() {
+	s.waitActiveOperations()
+	s.runner.Shutdown()
+	s.state.Store(schedulerStateStopped)
+	s.stoppedOnce.Do(func() {
+		close(s.stopped)
+	})
+}
+
+func (s *Scheduler) waitStopped(ctx context.Context) error {
+	if s.state.Load() == schedulerStateStopped {
+		return nil
+	}
+
+	select {
+	case <-s.stopped:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}

@@ -1,28 +1,12 @@
 package asynqx
 
-import (
-	"log"
+import "github.com/hibiken/asynq"
 
-	zap "github.com/gtkit/logger"
-	"github.com/hibiken/asynq"
-)
-
-// Logger is the interface for logging.
-var logger Logger
-
-// SetLogger sets the logger for asynq.
+// Logger 定义了库内使用的日志接口。
+// 该接口在 asynq.Logger 的基础上补充了格式化输出能力，便于业务统一接入结构化日志。
 type Logger interface {
 	asynq.Logger
 	Debugf(template string, args ...any)
 	Infof(format string, args ...any)
 	Errorf(template string, args ...any)
-}
-
-func initLogger(s *Server) {
-	if zap.Zlog() == nil {
-		log.Println("asynqx: No logger set, using default logger [zap-logger].")
-		zap.NewZap(zap.WithConsole(true))
-	}
-	logger = zap.Sugar()
-	s.asynqConfig.Logger, s.schedulerOpts.Logger = logger, logger
 }
