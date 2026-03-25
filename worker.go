@@ -195,13 +195,13 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 
 	<-ctx.Done()
-	return w.Shutdown(w.shutdownContext())
+	shutdownCtx, cancel := w.shutdownContext()
+	defer cancel()
+	return w.Shutdown(shutdownCtx)
 }
 
 // Shutdown 关闭 Worker，重复调用是安全的。
 func (w *Worker) Shutdown(ctx context.Context) error {
-	_ = ctx
-
 	if w == nil {
 		return nil
 	}
@@ -295,11 +295,10 @@ func (w *Worker) waitStopped(ctx context.Context) error {
 	}
 }
 
-func (w *Worker) shutdownContext() context.Context {
+func (w *Worker) shutdownContext() (context.Context, context.CancelFunc) {
 	if w.cfg.ShutdownTimeout <= 0 {
-		return context.Background()
+		return context.Background(), func() {}
 	}
 
-	ctx, _ := context.WithTimeout(context.Background(), w.cfg.ShutdownTimeout)
-	return ctx
+	return context.WithTimeout(context.Background(), w.cfg.ShutdownTimeout)
 }

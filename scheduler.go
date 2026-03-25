@@ -198,7 +198,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 
 	<-ctx.Done()
-	return s.Shutdown(s.shutdownContext())
+	shutdownCtx, cancel := s.shutdownContext()
+	defer cancel()
+	return s.Shutdown(shutdownCtx)
 }
 
 // Shutdown 关闭调度器；重复调用是安全的。
@@ -288,11 +290,10 @@ func (s *Scheduler) waitStopped(ctx context.Context) error {
 	}
 }
 
-func (s *Scheduler) shutdownContext() context.Context {
+func (s *Scheduler) shutdownContext() (context.Context, context.CancelFunc) {
 	if s.cfg.ShutdownTimeout <= 0 {
-		return context.Background()
+		return context.Background(), func() {}
 	}
 
-	ctx, _ := context.WithTimeout(context.Background(), s.cfg.ShutdownTimeout)
-	return ctx
+	return context.WithTimeout(context.Background(), s.cfg.ShutdownTimeout)
 }
