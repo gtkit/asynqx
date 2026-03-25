@@ -159,6 +159,29 @@ func TestNewConfigAppliesLoggerOption(t *testing.T) {
 	}
 }
 
+func TestNewConfigRejectsTooSmallGroupGracePeriod(t *testing.T) {
+	if _, err := NewConfig(WithGroupGracePeriodOption(500 * time.Millisecond)); err == nil {
+		t.Fatal("expected error for too small group grace period")
+	} else if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
+	}
+}
+
+func TestNewConfigAppliesShutdownTimeoutOption(t *testing.T) {
+	cfg, err := NewConfig(WithShutdownTimeoutOption(12 * time.Second))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.ShutdownTimeout != 12*time.Second {
+		t.Fatalf("expected shutdown timeout 12s, got %v", cfg.ShutdownTimeout)
+	}
+
+	if cfg.asynqConfig().ShutdownTimeout != 12*time.Second {
+		t.Fatalf("expected asynq config shutdown timeout 12s, got %v", cfg.asynqConfig().ShutdownTimeout)
+	}
+}
+
 func TestLegacyServerArtifactsRemoved(t *testing.T) {
 	for _, path := range []string{"server.go", "types.go"} {
 		if _, err := os.Stat(path); err == nil {

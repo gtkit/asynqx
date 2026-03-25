@@ -2,7 +2,6 @@ package asynqx
 
 import (
 	"context"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,9 +22,10 @@ type Scheduler struct {
 	cfg              Config
 	runner           schedulerRunner
 	state            atomic.Int32
-	activeOperations atomic.Int64
+	activeOperations activityCounter
 	stopped          chan struct{}
 	stoppedOnce      sync.Once
+	stopOnce         sync.Once
 }
 
 type schedulerRunner interface {
@@ -61,9 +61,10 @@ func newScheduler(cfg Config, factory schedulerRunnerFactory) (*Scheduler, error
 	}
 
 	scheduler := &Scheduler{
-		cfg:     cfg.clone(),
-		runner:  runner,
-		stopped: make(chan struct{}),
+		cfg:              cfg.clone(),
+		runner:           runner,
+		activeOperations: newActivityCounter(),
+		stopped:          make(chan struct{}),
 	}
 	scheduler.state.Store(schedulerStateIdle)
 
@@ -165,7 +166,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 
 	if err := s.runner.Start(); err != nil {
 		if s.state.Load() == schedulerStateStopping {
-			s.finishStop()
+			s.beginStop(false)
 			return ErrSchedulerStopped
 		}
 		s.state.Store(schedulerStateIdle)
@@ -176,7 +177,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		return nil
 	}
 	if s.state.Load() == schedulerStateStopping {
-		s.finishStop()
+		s.beginStop(false)
 		return ErrSchedulerStopped
 	}
 
@@ -197,7 +198,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 
 	<-ctx.Done()
-	return s.Shutdown(context.Background())
+	return s.Shutdown(s.shutdownContext())
 }
 
 // Shutdown 关闭调度器；重复调用是安全的。
@@ -213,7 +214,7 @@ func (s *Scheduler) Shutdown(ctx context.Context) error {
 		switch s.state.Load() {
 		case schedulerStateIdle:
 			if s.state.CompareAndSwap(schedulerStateIdle, schedulerStateStopping) {
-				s.finishStop()
+				s.beginStop(false)
 				return nil
 			}
 		case schedulerStateStarting:
@@ -222,7 +223,7 @@ func (s *Scheduler) Shutdown(ctx context.Context) error {
 			}
 		case schedulerStateRunning:
 			if s.state.CompareAndSwap(schedulerStateRunning, schedulerStateStopping) {
-				go s.finishStop()
+				s.beginStop(true)
 				return s.waitStopped(ctx)
 			}
 		case schedulerStateStopping, schedulerStateStopped:
@@ -239,33 +240,34 @@ func (s *Scheduler) beginOperation() error {
 			return ErrSchedulerStopped
 		}
 
-		current := s.activeOperations.Load()
-		if !s.activeOperations.CompareAndSwap(current, current+1) {
-			continue
-		}
+		s.activeOperations.Add()
 
 		switch s.state.Load() {
 		case schedulerStateIdle, schedulerStateStarting, schedulerStateRunning:
 			return nil
 		default:
-			s.activeOperations.Add(-1)
+			s.activeOperations.Done()
 			return ErrSchedulerStopped
 		}
 	}
 }
 
 func (s *Scheduler) endOperation() {
-	s.activeOperations.Add(-1)
+	s.activeOperations.Done()
 }
 
-func (s *Scheduler) waitActiveOperations() {
-	for s.activeOperations.Load() > 0 {
-		runtime.Gosched()
-	}
+func (s *Scheduler) beginStop(async bool) {
+	s.stopOnce.Do(func() {
+		if async {
+			go s.finishStop()
+			return
+		}
+		s.finishStop()
+	})
 }
 
 func (s *Scheduler) finishStop() {
-	s.waitActiveOperations()
+	s.activeOperations.Wait()
 	s.runner.Shutdown()
 	s.state.Store(schedulerStateStopped)
 	s.stoppedOnce.Do(func() {
@@ -284,4 +286,13 @@ func (s *Scheduler) waitStopped(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (s *Scheduler) shutdownContext() context.Context {
+	if s.cfg.ShutdownTimeout <= 0 {
+		return context.Background()
+	}
+
+	ctx, _ := context.WithTimeout(context.Background(), s.cfg.ShutdownTimeout)
+	return ctx
 }

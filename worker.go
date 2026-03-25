@@ -2,7 +2,7 @@ package asynqx
 
 import (
 	"context"
-	"runtime"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,12 +21,15 @@ const (
 
 // Worker 负责消费 asynq 任务并管理处理器注册与运行生命周期。
 type Worker struct {
-	cfg                 Config
-	mux                 *asynq.ServeMux
-	runner              workerRunner
-	handlers            sync.Map
-	state               atomic.Int32
-	activeRegistrations atomic.Int64
+	cfg           Config
+	mux           *asynq.ServeMux
+	runner        workerRunner
+	handlers      sync.Map
+	registrations activityCounter
+	state         atomic.Int32
+	stopped       chan struct{}
+	stoppedOnce   sync.Once
+	stopOnce      sync.Once
 }
 
 type workerRunner interface {
@@ -65,9 +68,11 @@ func newWorker(cfg Config, factory workerRunnerFactory) (*Worker, error) {
 	}
 
 	worker := &Worker{
-		cfg:    cfg.clone(),
-		mux:    mux,
-		runner: runner,
+		cfg:           cfg.clone(),
+		mux:           mux,
+		runner:        runner,
+		registrations: newActivityCounter(),
+		stopped:       make(chan struct{}),
 	}
 	worker.state.Store(workerStateIdle)
 
@@ -118,7 +123,7 @@ func Handle[T any](worker *Worker, taskType string, handler func(context.Context
 	return worker.HandleRaw(taskType, func(ctx context.Context, task *asynq.Task) error {
 		var payload T
 		if err := json.Unmarshal(task.Payload(), &payload); err != nil {
-			return err
+			return fmt.Errorf("unmarshal task payload: %w: %w", err, asynq.SkipRetry)
 		}
 		return handler(ctx, payload)
 	})
@@ -126,10 +131,14 @@ func Handle[T any](worker *Worker, taskType string, handler func(context.Context
 
 // Start 启动 Worker 底层执行器；成功后将拒绝新的处理器注册。
 func (w *Worker) Start(ctx context.Context) error {
-	_ = ctx
-
 	if w == nil {
 		return invalidArgumentError("worker", "must not be nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if !w.state.CompareAndSwap(workerStateIdle, workerStateStarting) {
 		switch w.state.Load() {
@@ -140,13 +149,21 @@ func (w *Worker) Start(ctx context.Context) error {
 		}
 	}
 
-	for w.activeRegistrations.Load() > 0 {
-		runtime.Gosched()
+	w.registrations.Wait()
+	if err := ctx.Err(); err != nil {
+		if w.state.CompareAndSwap(workerStateStarting, workerStateIdle) {
+			return err
+		}
+		if w.state.Load() == workerStateStopping {
+			w.markStopped()
+			return ErrWorkerStopped
+		}
+		return err
 	}
 
 	if err := w.runner.Start(w.mux); err != nil {
 		if w.state.Load() == workerStateStopping {
-			w.state.Store(workerStateStopped)
+			w.markStopped()
 			return ErrWorkerStopped
 		}
 		w.state.Store(workerStateIdle)
@@ -157,8 +174,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		return nil
 	}
 	if w.state.Load() == workerStateStopping {
-		w.runner.Shutdown()
-		w.state.Store(workerStateStopped)
+		w.beginStop(false)
 		return ErrWorkerStopped
 	}
 
@@ -179,7 +195,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 
 	<-ctx.Done()
-	return w.Shutdown(ctx)
+	return w.Shutdown(w.shutdownContext())
 }
 
 // Shutdown 关闭 Worker，重复调用是安全的。
@@ -189,25 +205,28 @@ func (w *Worker) Shutdown(ctx context.Context) error {
 	if w == nil {
 		return nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	for {
 		switch w.state.Load() {
 		case workerStateIdle:
-			if w.state.CompareAndSwap(workerStateIdle, workerStateStopped) {
+			if w.state.CompareAndSwap(workerStateIdle, workerStateStopping) {
+				w.markStopped()
 				return nil
 			}
 		case workerStateStarting:
 			if w.state.CompareAndSwap(workerStateStarting, workerStateStopping) {
-				return nil
+				return w.waitStopped(ctx)
 			}
 		case workerStateRunning:
 			if w.state.CompareAndSwap(workerStateRunning, workerStateStopping) {
-				w.runner.Shutdown()
-				w.state.Store(workerStateStopped)
-				return nil
+				w.beginStop(true)
+				return w.waitStopped(ctx)
 			}
 		case workerStateStopping, workerStateStopped:
-			return nil
+			return w.waitStopped(ctx)
 		}
 	}
 }
@@ -222,24 +241,65 @@ func (w *Worker) beginRegistration() error {
 			return ErrWorkerAlreadyRunning
 		}
 
-		current := w.activeRegistrations.Load()
-		if !w.activeRegistrations.CompareAndSwap(current, current+1) {
-			continue
-		}
+		w.registrations.Add()
 
 		switch w.state.Load() {
 		case workerStateStopping, workerStateStopped:
-			w.activeRegistrations.Add(-1)
+			w.registrations.Done()
 			return ErrWorkerStopped
 		case workerStateIdle:
 			return nil
 		default:
-			w.activeRegistrations.Add(-1)
+			w.registrations.Done()
 			return ErrWorkerAlreadyRunning
 		}
 	}
 }
 
 func (w *Worker) endRegistration() {
-	w.activeRegistrations.Add(-1)
+	w.registrations.Done()
+}
+
+func (w *Worker) beginStop(async bool) {
+	w.stopOnce.Do(func() {
+		if async {
+			go w.finishStop()
+			return
+		}
+		w.finishStop()
+	})
+}
+
+func (w *Worker) finishStop() {
+	w.runner.Shutdown()
+	w.markStopped()
+}
+
+func (w *Worker) markStopped() {
+	w.state.Store(workerStateStopped)
+	w.stoppedOnce.Do(func() {
+		close(w.stopped)
+	})
+}
+
+func (w *Worker) waitStopped(ctx context.Context) error {
+	if w.state.Load() == workerStateStopped {
+		return nil
+	}
+
+	select {
+	case <-w.stopped:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (w *Worker) shutdownContext() context.Context {
+	if w.cfg.ShutdownTimeout <= 0 {
+		return context.Background()
+	}
+
+	ctx, _ := context.WithTimeout(context.Background(), w.cfg.ShutdownTimeout)
+	return ctx
 }

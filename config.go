@@ -34,6 +34,7 @@ type Config struct {
 	IsFailure                func(error) bool
 	Location                 *time.Location
 	Logger                   Logger
+	ShutdownTimeout          time.Duration
 	TaskTimeout              time.Duration
 	Middleware               []asynq.MiddlewareFunc
 }
@@ -92,8 +93,35 @@ func (c Config) validate() error {
 		return invalidConfigurationError("concurrency", "must be > 0")
 	}
 
+	if c.ShutdownTimeout < 0 {
+		return invalidConfigurationError("shutdown_timeout", "must be >= 0")
+	}
+
 	if c.TaskTimeout <= 0 {
 		return invalidConfigurationError("task_timeout", "must be > 0")
+	}
+
+	if c.HealthCheckInterval < 0 {
+		return invalidConfigurationError("health_check_interval", "must be >= 0")
+	}
+
+	if c.DelayedTaskCheckInterval < 0 {
+		return invalidConfigurationError("delayed_task_check_interval", "must be >= 0")
+	}
+
+	if c.GroupGracePeriod < 0 {
+		return invalidConfigurationError("group_grace_period", "must be >= 0")
+	}
+	if c.GroupGracePeriod > 0 && c.GroupGracePeriod < time.Second {
+		return invalidConfigurationError("group_grace_period", "must be 0 or >= 1s")
+	}
+
+	if c.GroupMaxDelay < 0 {
+		return invalidConfigurationError("group_max_delay", "must be >= 0")
+	}
+
+	if c.GroupMaxSize < 0 {
+		return invalidConfigurationError("group_max_size", "must be >= 0")
 	}
 
 	for name, weight := range c.Queues {
@@ -128,6 +156,7 @@ func (c Config) asynqConfig() asynq.Config {
 		HealthCheckFunc:          c.HealthCheckFunc,
 		HealthCheckInterval:      c.HealthCheckInterval,
 		DelayedTaskCheckInterval: c.DelayedTaskCheckInterval,
+		ShutdownTimeout:          c.ShutdownTimeout,
 		GroupGracePeriod:         c.GroupGracePeriod,
 		GroupMaxDelay:            c.GroupMaxDelay,
 		GroupMaxSize:             c.GroupMaxSize,

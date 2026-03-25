@@ -147,6 +147,14 @@ func WithHealthCheckIntervalOption(interval time.Duration) ConfigOption {
 	}
 }
 
+// WithShutdownTimeoutOption 设置共享配置中的优雅关闭超时时间。
+func WithShutdownTimeoutOption(timeout time.Duration) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.ShutdownTimeout = timeout
+		return nil
+	}
+}
+
 // WithDelayedTaskCheckIntervalOption 设置共享配置中的延迟任务检查间隔。
 func WithDelayedTaskCheckIntervalOption(interval time.Duration) ConfigOption {
 	return func(cfg *Config) error {

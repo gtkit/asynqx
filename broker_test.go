@@ -18,6 +18,8 @@ type stubBrokerClient struct {
 	enqueueInfo  *asynq.TaskInfo
 	enqueueErr   error
 	closeErr     error
+	started      chan struct{}
+	blockEnqueue chan struct{}
 }
 
 func (s *stubBrokerClient) EnqueueContext(ctx context.Context, task *asynq.Task, opts ...asynq.Option) (*asynq.TaskInfo, error) {
@@ -25,6 +27,16 @@ func (s *stubBrokerClient) EnqueueContext(ctx context.Context, task *asynq.Task,
 	s.lastCtx = ctx
 	s.lastTask = task
 	s.lastOpts = append([]asynq.Option(nil), opts...)
+	if s.started != nil {
+		select {
+		case <-s.started:
+		default:
+			close(s.started)
+		}
+	}
+	if s.blockEnqueue != nil {
+		<-s.blockEnqueue
+	}
 	if s.enqueueInfo != nil || s.enqueueErr != nil {
 		return s.enqueueInfo, s.enqueueErr
 	}
@@ -161,4 +173,98 @@ func TestBrokerEnqueueAppliesDefaultTaskTimeout(t *testing.T) {
 	}
 
 	assertAsynqOption(t, client.lastOpts[0], asynq.TimeoutOpt, 45*time.Second)
+}
+
+func TestBrokerCloseWaitsForInflightEnqueue(t *testing.T) {
+	cfg, err := NewConfig()
+	if err != nil {
+		t.Fatalf("unexpected config error: %v", err)
+	}
+
+	client := &stubBrokerClient{
+		started:      make(chan struct{}),
+		blockEnqueue: make(chan struct{}),
+	}
+	broker, err := newBroker(cfg, func(Config) (brokerClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected broker error: %v", err)
+	}
+
+	enqueueDone := make(chan error, 1)
+	go func() {
+		_, err := broker.Enqueue(context.Background(), "email:send", map[string]string{"id": "9"})
+		enqueueDone <- err
+	}()
+
+	<-client.started
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- broker.Close()
+	}()
+
+	select {
+	case err := <-closeDone:
+		t.Fatalf("close returned before inflight enqueue completed: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(client.blockEnqueue)
+
+	if err := <-enqueueDone; err != nil {
+		t.Fatalf("unexpected enqueue error: %v", err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatalf("unexpected close error: %v", err)
+	}
+	if client.closeCalls != 1 {
+		t.Fatalf("expected client close to be called once, got %d", client.closeCalls)
+	}
+}
+
+func TestBrokerShutdownRespectsContext(t *testing.T) {
+	cfg, err := NewConfig()
+	if err != nil {
+		t.Fatalf("unexpected config error: %v", err)
+	}
+
+	client := &stubBrokerClient{
+		started:      make(chan struct{}),
+		blockEnqueue: make(chan struct{}),
+	}
+	broker, err := newBroker(cfg, func(Config) (brokerClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected broker error: %v", err)
+	}
+
+	enqueueDone := make(chan error, 1)
+	go func() {
+		_, err := broker.Enqueue(context.Background(), "email:send", map[string]string{"id": "10"})
+		enqueueDone <- err
+	}()
+
+	<-client.started
+
+	shutdownCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := broker.Shutdown(shutdownCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation error, got %v", err)
+	}
+
+	close(client.blockEnqueue)
+
+	if err := <-enqueueDone; err != nil {
+		t.Fatalf("unexpected enqueue error: %v", err)
+	}
+	if err := broker.Close(); err != nil {
+		t.Fatalf("unexpected close error after cancellation: %v", err)
+	}
+	if client.closeCalls != 1 {
+		t.Fatalf("expected client close to be called once, got %d", client.closeCalls)
+	}
 }

@@ -185,10 +185,12 @@ func main() {
 - `NewBroker(opts ...BrokerOption) (*Broker, error)`
 - `(*Broker).Enqueue(ctx, taskType, payload, opts...)`
 - `(*Broker).Close() error`
+- `(*Broker).Shutdown(ctx) error`
 
 语义：
 
 - `Close` 幂等
+- `Shutdown(ctx)` 允许调用方为关闭等待设置超时
 - 关闭后再次投递返回 `ErrClosed`
 - `Enqueue` 支持 `context.Context`
 
@@ -231,6 +233,7 @@ func main() {
 - 停止后注册或取消返回 `ErrSchedulerStopped`
 - `Shutdown` 幂等
 - `Run` 在 `ctx` 取消后会主动执行关闭流程
+- `Run` 在外部取消后，会使用 `ShutdownTimeout` 作为默认关闭等待预算
 
 ## 配置方法
 
@@ -259,6 +262,7 @@ func main() {
 - `WithErrorHandlerOption(fn asynq.ErrorHandler)`
 - `WithHealthCheckFuncOption(fn func(error))`
 - `WithHealthCheckIntervalOption(interval time.Duration)`
+- `WithShutdownTimeoutOption(timeout time.Duration)`
 - `WithDelayedTaskCheckIntervalOption(interval time.Duration)`
 - `WithGroupGracePeriodOption(interval time.Duration)`
 - `WithGroupMaxDelayOption(interval time.Duration)`
@@ -365,16 +369,61 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 ## 并发安全说明
 
 - `Broker.Close` 幂等，且关闭后会拒绝新的投递
-- `Broker` 使用原子计数保证 `Enqueue` 与 `Close` 不会并发操作同一个底层 client
+- `Broker.Shutdown(ctx)` 可为在途投递等待设置上界
+- `Broker` 在关闭期间会等待已进入底层 client 的投递调用完成，再关闭底层连接
 - `Worker` 和 `Scheduler` 使用显式状态机处理 `Start/Shutdown` 竞态
 - 处理器注册只允许在 `Worker` 启动前完成
 - 核心运行路径尽量避免显式锁；仅在底层依赖或测试框架需要时使用最小同步原语
+
+## 停机与超时语义
+
+这一节描述 `ctx`、`Run`、`Shutdown` 和 `WithShutdownTimeoutOption` 的协作关系。
+
+### 总体原则
+
+- 调用方主动调用 `Shutdown(ctx)` 时，以调用方传入的 `ctx` 为准
+- 调用方使用 `Run(ctx)` 时，`ctx` 负责“何时开始停机”
+- `Run(ctx)` 进入停机阶段后，默认关闭等待预算来自 `WithShutdownTimeoutOption`
+- `WithShutdownTimeoutOption(0)` 表示不额外设置默认关闭超时，内部会使用 `context.Background()`
+
+### Broker
+
+- `Enqueue(ctx, ...)` 的 `ctx` 只控制单次投递请求
+- `Close()` 等价于 `Shutdown(context.Background())`
+- `Shutdown(ctx)` 会拒绝新的投递，并等待已经进入底层 client 的投递完成
+- 如果等待期间 `ctx` 超时或取消，`Shutdown(ctx)` 返回对应错误；后台关闭流程会继续完成
+
+### Worker
+
+- `Start(ctx)` 在真正启动前会检查 `ctx`
+- 如果 `Start(ctx)` 期间 `ctx` 已取消，会直接返回，不进入底层 `asynq.Server`
+- `Run(ctx)` 中的 `ctx` 只负责触发停机
+- `Run(ctx)` 收到取消后，会调用内部关闭流程，并使用 `ShutdownTimeout` 作为默认等待预算
+- `Shutdown(ctx)` 会等待底层 worker 退出；如果 `ctx` 先超时，返回 `context.DeadlineExceeded` 或 `context.Canceled`
+- `WithShutdownTimeoutOption` 控制的是 `Run(ctx)` 触发后的默认优雅关闭预算，不覆盖显式 `Shutdown(ctx)` 传入的 `ctx`
+
+### Scheduler
+
+- `Start(ctx)` 当前只在进入启动前检查 `ctx`
+- `Run(ctx)` 中的 `ctx` 只负责触发停机
+- `Run(ctx)` 收到取消后，会使用 `ShutdownTimeout` 作为默认等待预算调用 `Shutdown`
+- `Shutdown(ctx)` 会等待活跃操作结束并调用底层调度器关闭
+- 如果 `Shutdown(ctx)` 先超时，会立即向调用方返回对应错误；后台停止流程仍可能继续直到自然完成
+
+### 生产建议
+
+- 服务主进程优先使用 `Run(signalCtx)`，并配置 `WithShutdownTimeoutOption`
+- `ShutdownTimeout` 应大于业务 handler 的正常耗时上界，否则停机时任务更容易被回推 Redis
+- 如果你的服务框架已经有统一停机预算，直接显式调用 `Shutdown(ctx)`，不要依赖默认预算
+- 对 `Broker` 而言，若停机时不希望无限等待在途投递，应优先调用 `Shutdown(ctx)` 而不是 `Close()`
 
 ## 生产环境建议
 
 - 明确区分生产者进程、消费者进程、调度进程，不要把所有角色强塞进一个服务
 - 为不同业务队列配置合理的 `Queues` 权重
 - 配置任务超时、重试次数、唯一窗口，避免无界重试
+- 为 `Worker` 配置 `WithShutdownTimeoutOption`，让优雅停机预算和任务时长匹配
+- 为 `Scheduler` 配置 `WithShutdownTimeoutOption`，避免周期调度进程在退出时无限等待
 - 为 Redis 配置认证、TLS、连接池和超时
 - 通过 `WithLoggerOption` 接入统一日志实现
 - 通过 `WithMiddlewareOption` 接入 tracing、metrics、recover 等中间件

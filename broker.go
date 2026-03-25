@@ -2,8 +2,8 @@ package asynqx
 
 import (
 	"context"
-	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/hibiken/asynq"
@@ -11,10 +11,13 @@ import (
 
 // Broker 负责投递任务到 asynq。
 type Broker struct {
-	cfg    Config
-	client atomic.Pointer[brokerClientRef]
-	closed atomic.Bool
-	active atomic.Int64
+	cfg       Config
+	client    atomic.Pointer[brokerClientRef]
+	closed    atomic.Bool
+	active    activityCounter
+	closeDone chan struct{}
+	closeMu   sync.Mutex
+	closeErr  error
 }
 
 type brokerClient interface {
@@ -53,7 +56,11 @@ func newBroker(cfg Config, factory brokerClientFactory) (*Broker, error) {
 		return nil, invalidConfigurationError("broker.client", "must not be nil")
 	}
 
-	broker := &Broker{cfg: cfg.clone()}
+	broker := &Broker{
+		cfg:       cfg.clone(),
+		active:    newActivityCounter(),
+		closeDone: make(chan struct{}),
+	}
 	broker.client.Store(&brokerClientRef{client: client})
 
 	return broker, nil
@@ -94,23 +101,30 @@ func (b *Broker) Enqueue(ctx context.Context, taskType string, payload any, opts
 
 // Close 关闭 Broker，重复调用是安全的。
 func (b *Broker) Close() error {
+	return b.Shutdown(context.Background())
+}
+
+// Shutdown 关闭 Broker，并等待在途投递完成或 ctx 取消。
+func (b *Broker) Shutdown(ctx context.Context) error {
 	if b == nil {
 		return nil
 	}
-	if !b.closed.CompareAndSwap(false, true) {
-		return nil
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if b.closed.CompareAndSwap(false, true) {
+		clientRef := b.client.Swap(nil)
+		go b.finishClose(clientRef)
 	}
 
-	clientRef := b.client.Swap(nil)
-	if clientRef == nil || clientRef.client == nil {
-		return nil
+	select {
+	case <-b.closeDone:
+		b.closeMu.Lock()
+		defer b.closeMu.Unlock()
+		return b.closeErr
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-
-	for b.active.Load() > 0 {
-		runtime.Gosched()
-	}
-
-	return clientRef.client.Close()
 }
 
 func (b *Broker) acquireClient() (*brokerClientRef, func(), error) {
@@ -119,24 +133,35 @@ func (b *Broker) acquireClient() (*brokerClientRef, func(), error) {
 			return nil, nil, ErrClosed
 		}
 
-		current := b.active.Load()
-		if !b.active.CompareAndSwap(current, current+1) {
-			continue
-		}
+		b.active.Add()
 
 		if b.closed.Load() {
-			b.active.Add(-1)
+			b.active.Done()
 			return nil, nil, ErrClosed
 		}
 
 		clientRef := b.client.Load()
 		if clientRef == nil || clientRef.client == nil {
-			b.active.Add(-1)
+			b.active.Done()
 			return nil, nil, ErrClosed
 		}
 
 		return clientRef, func() {
-			b.active.Add(-1)
+			b.active.Done()
 		}, nil
 	}
+}
+
+func (b *Broker) finishClose(clientRef *brokerClientRef) {
+	defer close(b.closeDone)
+
+	b.active.Wait()
+	if clientRef == nil || clientRef.client == nil {
+		return
+	}
+
+	err := clientRef.client.Close()
+	b.closeMu.Lock()
+	b.closeErr = err
+	b.closeMu.Unlock()
 }

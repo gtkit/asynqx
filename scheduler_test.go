@@ -26,8 +26,10 @@ type stubSchedulerRunner struct {
 	registeredOpts []asynq.Option
 	unregisteredID string
 
-	started    chan struct{}
-	blockStart chan struct{}
+	started       chan struct{}
+	blockStart    chan struct{}
+	blockShutdown chan struct{}
+	shutdownStart chan struct{}
 }
 
 func (r *stubSchedulerRunner) Register(spec string, task *asynq.Task, opts ...asynq.Option) (string, error) {
@@ -64,6 +66,16 @@ func (r *stubSchedulerRunner) Start() error {
 
 func (r *stubSchedulerRunner) Shutdown() {
 	r.shutdownCalls.Add(1)
+	if r.shutdownStart != nil {
+		select {
+		case <-r.shutdownStart:
+		default:
+			close(r.shutdownStart)
+		}
+	}
+	if r.blockShutdown != nil {
+		<-r.blockShutdown
+	}
 }
 
 type schedulerTestPayload struct {
@@ -317,4 +329,41 @@ func TestSchedulerShutdownRespectsContextWhileStartInProgress(t *testing.T) {
 	if got := runner.shutdownCalls.Load(); got != 1 {
 		t.Fatalf("expected shutdown to be called once after start completed, got %d", got)
 	}
+}
+
+func TestSchedulerRunUsesConfiguredShutdownTimeout(t *testing.T) {
+	cfg, err := NewConfig(WithShutdownTimeoutOption(20 * time.Millisecond))
+	if err != nil {
+		t.Fatalf("unexpected config error: %v", err)
+	}
+
+	runner := &stubSchedulerRunner{
+		started:       make(chan struct{}),
+		blockShutdown: make(chan struct{}),
+		shutdownStart: make(chan struct{}),
+	}
+	scheduler, err := newScheduler(cfg, func(Config) (schedulerRunner, error) {
+		return runner, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected scheduler error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- scheduler.Run(ctx)
+	}()
+
+	<-runner.started
+	cancel()
+	<-runner.shutdownStart
+
+	if err := <-runErr; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded from shutdown timeout, got %v", err)
+	}
+
+	close(runner.blockShutdown)
 }

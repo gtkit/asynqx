@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gtkit/json"
 	"github.com/hibiken/asynq"
@@ -16,6 +17,8 @@ type stubWorkerRunner struct {
 	startErr      error
 	started       chan struct{}
 	blockStart    chan struct{}
+	blockShutdown chan struct{}
+	shutdownStart chan struct{}
 }
 
 func (r *stubWorkerRunner) Start(asynq.Handler) error {
@@ -35,6 +38,16 @@ func (r *stubWorkerRunner) Start(asynq.Handler) error {
 
 func (r *stubWorkerRunner) Shutdown() {
 	r.shutdownCalls.Add(1)
+	if r.shutdownStart != nil {
+		select {
+		case <-r.shutdownStart:
+		default:
+			close(r.shutdownStart)
+		}
+	}
+	if r.blockShutdown != nil {
+		<-r.blockShutdown
+	}
 }
 
 type workerTestPayload struct {
@@ -86,6 +99,23 @@ func TestHandleBeforeStartProcessesDecodedPayload(t *testing.T) {
 
 	if !called.Load() {
 		t.Fatal("expected handler to be called")
+	}
+}
+
+func TestHandleReturnsSkipRetryOnInvalidPayload(t *testing.T) {
+	worker := newTestWorker(t, &stubWorkerRunner{})
+
+	if err := Handle(worker, "email:welcome", func(context.Context, workerTestPayload) error {
+		t.Fatal("handler should not be called for invalid payload")
+		return nil
+	}); err != nil {
+		t.Fatalf("unexpected register error: %v", err)
+	}
+
+	task := asynq.NewTask("email:welcome", []byte("{"))
+	err := worker.mux.ProcessTask(context.Background(), task)
+	if !errors.Is(err, asynq.SkipRetry) {
+		t.Fatalf("expected SkipRetry, got %v", err)
 	}
 }
 
@@ -181,14 +211,19 @@ func TestShutdownWhileStartInProgressStopsWorker(t *testing.T) {
 
 	<-runner.started
 
-	if err := worker.Shutdown(context.Background()); err != nil {
-		t.Fatalf("unexpected shutdown error: %v", err)
-	}
+	shutdownErr := make(chan error, 1)
+	go func() {
+		shutdownErr <- worker.Shutdown(context.Background())
+	}()
 
 	close(runner.blockStart)
 
-	if err := <-startErr; !errors.Is(err, ErrWorkerStopped) {
-		t.Fatalf("expected ErrWorkerStopped, got %v", err)
+	if err := <-shutdownErr; err != nil {
+		t.Fatalf("unexpected shutdown error: %v", err)
+	}
+
+	if err := <-startErr; err != nil && !errors.Is(err, ErrWorkerStopped) {
+		t.Fatalf("expected nil or ErrWorkerStopped, got %v", err)
 	}
 
 	if got := runner.shutdownCalls.Load(); got != 1 {
@@ -209,4 +244,67 @@ func TestHandleRawRejectsRegistrationAfterShutdown(t *testing.T) {
 	if !errors.Is(err, ErrWorkerStopped) {
 		t.Fatalf("expected ErrWorkerStopped, got %v", err)
 	}
+}
+
+func TestShutdownRespectsContextWhileRunning(t *testing.T) {
+	runner := &stubWorkerRunner{
+		blockShutdown: make(chan struct{}),
+		shutdownStart: make(chan struct{}),
+	}
+	worker := newTestWorker(t, runner)
+
+	if err := worker.Start(context.Background()); err != nil {
+		t.Fatalf("unexpected start error: %v", err)
+	}
+
+	shutdownCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := worker.Shutdown(shutdownCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation error, got %v", err)
+	}
+
+	<-runner.shutdownStart
+	close(runner.blockShutdown)
+
+	if err := worker.Shutdown(context.Background()); err != nil {
+		t.Fatalf("unexpected shutdown wait error: %v", err)
+	}
+}
+
+func TestRunUsesConfiguredShutdownTimeout(t *testing.T) {
+	cfg, err := NewConfig(WithShutdownTimeoutOption(20 * time.Millisecond))
+	if err != nil {
+		t.Fatalf("unexpected config error: %v", err)
+	}
+
+	runner := &stubWorkerRunner{
+		started:       make(chan struct{}),
+		blockShutdown: make(chan struct{}),
+		shutdownStart: make(chan struct{}),
+	}
+	worker, err := newWorker(cfg, func(Config) (workerRunner, error) {
+		return runner, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected worker error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- worker.Run(ctx)
+	}()
+
+	<-runner.started
+	cancel()
+	<-runner.shutdownStart
+
+	if err := <-runErr; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded from shutdown timeout, got %v", err)
+	}
+
+	close(runner.blockShutdown)
 }

@@ -155,6 +155,7 @@ func (w *Worker) Start(ctx context.Context) error
 func (w *Worker) Shutdown(ctx context.Context) error
 
 func (b *Broker) Close() error
+func (b *Broker) Shutdown(ctx context.Context) error
 ```
 
 约束：
@@ -163,6 +164,17 @@ func (b *Broker) Close() error
 - `Start` 为非阻塞方法，适合集成到已有服务框架。
 - `Shutdown` 支持幂等调用。
 - 所有阻塞等待必须接受 `context.Context`。
+- `Worker.Run` 在收到外部取消后，会使用 `ShutdownTimeout` 作为默认优雅关闭预算。
+- `Scheduler.Run` 在收到外部取消后，也会使用 `ShutdownTimeout` 作为默认关闭预算。
+
+停机语义：
+
+- 显式调用 `Shutdown(ctx)` 时，始终以调用方传入的 `ctx` 作为等待上界。
+- `Run(ctx)` 中的 `ctx` 只负责“开始停机”的触发，不直接复用为关闭等待预算。
+- `Run(ctx)` 进入关闭阶段后，默认等待预算来自 `ShutdownTimeout`。
+- `Broker.Close()` 等价于无超时版本的关闭；若调用方需要控制等待上界，应使用 `Broker.Shutdown(ctx)`。
+- `Worker.Shutdown(ctx)` 和 `Scheduler.Shutdown(ctx)` 若先于底层停止完成而超时，应向调用方返回 `ctx.Err()`。
+- `Scheduler.Shutdown(ctx)` 即使向调用方超时返回，后台停止流程仍可能继续直到活跃操作结束。
 
 ## 配置模型
 
@@ -198,6 +210,7 @@ func (b *Broker) Close() error
 - `WithErrorHandler`
 - `WithHealthCheckFunc`
 - `WithHealthCheckInterval`
+- `WithShutdownTimeout`
 - `WithDelayedTaskCheckInterval`
 - `WithGroupGracePeriod`
 - `WithGroupMaxDelay`
