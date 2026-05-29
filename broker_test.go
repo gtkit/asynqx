@@ -201,7 +201,7 @@ func TestBrokerEnqueueMarshalsPayloadAndPassesOptions(t *testing.T) {
 }
 
 func TestBrokerEnqueueAppliesDefaultTaskTimeout(t *testing.T) {
-	cfg, err := NewConfig(WithTaskTimeoutOption(45 * time.Second))
+	cfg, err := NewConfig(WithDefaultTaskTimeout(45 * time.Second))
 	if err != nil {
 		t.Fatalf("unexpected config error: %v", err)
 	}

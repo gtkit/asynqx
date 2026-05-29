@@ -43,6 +43,13 @@ func NewBroker(opts ...BrokerOption) (*Broker, error) {
 }
 
 var defaultBrokerClientFactory brokerClientFactory = func(cfg Config) (brokerClient, error) {
+	if cfg.PingOnStart {
+		err := pingRedisOptionOnStart(context.Background(), cfg.Redis)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return asynq.NewClient(cfg.Redis), nil
 }
 
@@ -51,7 +58,7 @@ func newBroker(cfg Config, factory brokerClientFactory) (*Broker, error) {
 		return nil, invalidConfigurationError("broker.client_factory", "must not be nil")
 	}
 
-	client, err := factory(cfg.clone())
+	client, err := factory(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +125,7 @@ func (b *Broker) Close() error {
 }
 
 // Shutdown 关闭 Broker，并等待在途投递完成或 ctx 取消。
+// ctx 取消只解除调用方等待；已经进入底层 client 的投递完成后，后台关闭流程才会释放底层资源。
 func (b *Broker) Shutdown(ctx context.Context) error {
 	if b == nil {
 		return nil

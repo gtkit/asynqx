@@ -1,6 +1,10 @@
 package asynqx
 
-import "github.com/hibiken/asynq"
+import (
+	"context"
+
+	"github.com/hibiken/asynq"
+)
 
 // Inspector 是 asynq 队列检查器，用于运维检查、排障和统计。
 type Inspector = asynq.Inspector
@@ -23,7 +27,7 @@ func newInspector(cfg Config, factory inspectorClientFactory) (*Inspector, error
 		return nil, invalidConfigurationError("inspector.client_factory", "must not be nil")
 	}
 
-	inspector, err := factory(cfg.clone())
+	inspector, err := factory(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -36,5 +40,12 @@ func newInspector(cfg Config, factory inspectorClientFactory) (*Inspector, error
 }
 
 var defaultInspectorClientFactory inspectorClientFactory = func(cfg Config) (*Inspector, error) {
+	if cfg.PingOnStart {
+		err := pingRedisOptionOnStart(context.Background(), cfg.Redis)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return asynq.NewInspector(cfg.Redis), nil
 }

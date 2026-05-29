@@ -58,8 +58,8 @@ type EmailPayload struct {
 
 func main() {
 	broker, err := asynqx.NewBroker(
-		asynqx.WithRedisAddrOption("127.0.0.1:6379"),
-		asynqx.WithRedisDBOption(0),
+		asynqx.WithRedisAddr("127.0.0.1:6379"),
+		asynqx.WithRedisDB(0),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -100,9 +100,9 @@ type EmailPayload struct {
 
 func main() {
 	worker, err := asynqx.NewWorker(
-		asynqx.WithRedisAddrOption("127.0.0.1:6379"),
-		asynqx.WithConcurrencyOption(16),
-		asynqx.WithQueuesOption(map[string]int{
+		asynqx.WithRedisAddr("127.0.0.1:6379"),
+		asynqx.WithConcurrency(16),
+		asynqx.WithQueues(map[string]int{
 			"critical": 10,
 			"default":  5,
 		}),
@@ -147,8 +147,8 @@ type ReportPayload struct {
 
 func main() {
 	scheduler, err := asynqx.NewScheduler(
-		asynqx.WithRedisAddrOption("127.0.0.1:6379"),
-		asynqx.WithLocationOption("Asia/Shanghai"),
+		asynqx.WithRedisAddr("127.0.0.1:6379"),
+		asynqx.WithLocation("Asia/Shanghai"),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -189,7 +189,7 @@ import (
 
 func main() {
 	inspector, err := asynqx.NewInspector(
-		asynqx.WithRedisAddrOption("127.0.0.1:6379"),
+		asynqx.WithRedisAddr("127.0.0.1:6379"),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -279,21 +279,22 @@ func main() {
 
 这些选项可同时用于 `NewBroker`、`NewWorker`、`NewScheduler`、`NewInspector`：
 
-- `WithRedisOption(opt asynq.RedisConnOpt)`
-- `WithRedisClientOption(opt asynq.RedisClientOpt)`
-- `WithRedisFailoverOption(opt asynq.RedisFailoverClientOpt)`
-- `WithRedisClusterOption(opt asynq.RedisClusterClientOpt)`
-- `WithRedisAddrOption(addr string)`
-- `WithRedisUserOption(userName string)`
-- `WithRedisPasswordOption(password string)`
-- `WithRedisDBOption(db int)`
-- `WithRedisPoolSizeOption(size int)`
-- `WithDialTimeoutOption(timeout time.Duration)`
-- `WithReadTimeoutOption(timeout time.Duration)`
-- `WithWriteTimeoutOption(timeout time.Duration)`
-- `WithTLSConfigOption(cfg *tls.Config)`
-- `WithLocationOption(name string)`
-- `WithLoggerOption(log Logger)`
+- `WithRedis(opt asynq.RedisConnOpt)`
+- `WithRedisClient(opt asynq.RedisClientOpt)`
+- `WithRedisFailover(opt asynq.RedisFailoverClientOpt)`
+- `WithRedisCluster(opt asynq.RedisClusterClientOpt)`
+- `WithRedisAddr(addr string)`
+- `WithRedisUser(userName string)`
+- `WithRedisPassword(password string)`
+- `WithRedisDB(db int)`
+- `WithRedisPoolSize(size int)`
+- `WithDialTimeout(timeout time.Duration)`
+- `WithReadTimeout(timeout time.Duration)`
+- `WithWriteTimeout(timeout time.Duration)`
+- `WithTLSConfig(cfg *tls.Config)`
+- `WithLocation(name string)`
+- `WithLogger(log Logger)`
+- `WithPingOnStart(enabled bool)`
 
 ### Redis 部署形态
 
@@ -301,7 +302,7 @@ func main() {
 
 ```go
 worker, err := asynqx.NewWorker(
-	asynqx.WithRedisFailoverOption(asynq.RedisFailoverClientOpt{
+	asynqx.WithRedisFailover(asynq.RedisFailoverClientOpt{
 		MasterName:    "primary",
 		SentinelAddrs: []string{"10.0.0.1:26379", "10.0.0.2:26379", "10.0.0.3:26379"},
 		Username:      "app",
@@ -313,7 +314,7 @@ worker, err := asynqx.NewWorker(
 
 ```go
 broker, err := asynqx.NewBroker(
-	asynqx.WithRedisClusterOption(asynq.RedisClusterClientOpt{
+	asynqx.WithRedisCluster(asynq.RedisClusterClientOpt{
 		Addrs:    []string{"10.0.1.1:6379", "10.0.1.2:6379", "10.0.1.3:6379"},
 		Username: "app",
 		Password: "secret",
@@ -321,11 +322,13 @@ broker, err := asynqx.NewBroker(
 )
 ```
 
-`WithRedisAddrOption`、`WithRedisUserOption`、`WithRedisPasswordOption` 等便捷选项只适用于单机 Redis。已经使用 Sentinel 或 Cluster 配置后，不应再叠加这些单机字段选项。
+`WithRedisAddr`、`WithRedisUser`、`WithRedisPassword` 等便捷选项只适用于单机 Redis。已经使用 Sentinel 或 Cluster 配置后，不应再叠加这些单机字段选项。
+
+默认情况下 Redis 连接保持 asynq/go-redis 的懒连接语义。需要启动时尽早暴露 Redis 不可达问题时，可以显式配置 `WithPingOnStart(true)`；该选项会在组件创建阶段执行一次 `PING`，失败时直接返回错误。
 
 ### gtkit/logger 接入示例
 
-`Logger` 兼容 asynq 的基础日志接口，并补充格式化方法。可以在业务层放一个轻量适配器：
+`Logger` 直接兼容 asynq 的基础日志接口。asynqx 内部不会主动调用 `Fatal`，但底层 asynq 仍保留 `Fatal` 的退出语义；业务适配器应按自身日志库策略谨慎实现。
 
 ```go
 type gtkitLoggerAdapter struct {
@@ -337,31 +340,26 @@ func (l gtkitLoggerAdapter) Info(args ...any)  { l.log.Info(args...) }
 func (l gtkitLoggerAdapter) Warn(args ...any)  { l.log.Warn(args...) }
 func (l gtkitLoggerAdapter) Error(args ...any) { l.log.Error(args...) }
 func (l gtkitLoggerAdapter) Fatal(args ...any) { l.log.Fatal(args...) }
-
-func (l gtkitLoggerAdapter) Debugf(format string, args ...any) { l.log.Debugf(format, args...) }
-func (l gtkitLoggerAdapter) Infof(format string, args ...any)  { l.log.Infof(format, args...) }
-func (l gtkitLoggerAdapter) Warnf(format string, args ...any)  { l.log.Warnf(format, args...) }
-func (l gtkitLoggerAdapter) Errorf(format string, args ...any) { l.log.Errorf(format, args...) }
-func (l gtkitLoggerAdapter) Fatalf(format string, args ...any) { l.log.Fatalf(format, args...) }
 ```
 
 ### Worker 相关配置
 
-- `WithConcurrencyOption(concurrency int)`
-- `WithQueuesOption(queues map[string]int)`
-- `WithRetryDelayFuncOption(fn asynq.RetryDelayFunc)`
-- `WithStrictPriorityOption(val bool)`
-- `WithErrorHandlerOption(fn asynq.ErrorHandler)`
-- `WithHealthCheckFuncOption(fn func(error))`
-- `WithHealthCheckIntervalOption(interval time.Duration)`
-- `WithShutdownTimeoutOption(timeout time.Duration)`
-- `WithDelayedTaskCheckIntervalOption(interval time.Duration)`
-- `WithGroupGracePeriodOption(interval time.Duration)`
-- `WithGroupMaxDelayOption(interval time.Duration)`
-- `WithGroupMaxSizeOption(size int)`
-- `WithMiddlewareOption(middlewares ...asynq.MiddlewareFunc)`
-- `WithIsFailureOption(fn func(error) bool)`
-- `WithTaskTimeoutOption(timeout time.Duration)`
+- `WithConcurrency(concurrency int)`
+- `WithQueues(queues map[string]int)`
+- `WithRetryDelayFunc(fn asynq.RetryDelayFunc)`
+- `WithStrictPriority(val bool)`
+- `WithErrorHandler(fn asynq.ErrorHandler)`
+- `WithHealthCheckFunc(fn func(error))`
+- `WithHealthCheckInterval(interval time.Duration)`
+- `WithShutdownTimeout(timeout time.Duration)`
+- `WithDelayedTaskCheckInterval(interval time.Duration)`
+- `WithGroupGracePeriod(interval time.Duration)`
+- `WithGroupMaxDelay(interval time.Duration)`
+- `WithGroupMaxSize(size int)`
+- `WithMiddleware(middlewares ...asynq.MiddlewareFunc)`
+- `WithIsFailure(fn func(error) bool)`
+- `WithDefaultTaskTimeout(timeout time.Duration)`
+- `WithPingOnStart(enabled bool)`
 
 ## 任务选项
 
@@ -469,15 +467,15 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 
 ## 停机与超时语义
 
-这一节描述 `ctx`、`Run`、`Shutdown` 和 `WithShutdownTimeoutOption` 的协作关系。
+这一节描述 `ctx`、`Run`、`Shutdown` 和 `WithShutdownTimeout` 的协作关系。
 
 ### 总体原则
 
 - 调用方主动调用 `Shutdown(ctx)` 时，以调用方传入的 `ctx` 为准
 - 调用方使用 `Run(ctx)` 时，`ctx` 负责“何时开始停机”
-- `Run(ctx)` 进入停机阶段后，默认关闭等待预算来自 `WithShutdownTimeoutOption`
+- `Run(ctx)` 进入停机阶段后，默认关闭等待预算来自 `WithShutdownTimeout`
 - 默认 `ShutdownTimeout` 是 `30s`
-- `WithShutdownTimeoutOption(0)` 表示不额外设置默认关闭超时，内部会使用 `context.Background()`
+- `WithShutdownTimeout(0)` 表示不额外设置默认关闭超时，内部会使用 `context.Background()`
 - 如果 `Run(ctx)` 因 `ctx` 取消而触发停机且关闭成功，返回值是 `nil`；调用方需要区分退出原因时，应在外层读取传入的 `ctx.Err()`
 
 ### Broker
@@ -494,7 +492,7 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 - `Run(ctx)` 中的 `ctx` 只负责触发停机
 - `Run(ctx)` 收到取消后，会调用内部关闭流程，并使用 `ShutdownTimeout` 作为默认等待预算
 - `Shutdown(ctx)` 会等待底层 worker 退出；如果 `ctx` 先超时，返回 `context.DeadlineExceeded` 或 `context.Canceled`
-- `WithShutdownTimeoutOption` 控制的是 `Run(ctx)` 触发后的默认优雅关闭预算，不覆盖显式 `Shutdown(ctx)` 传入的 `ctx`
+- `WithShutdownTimeout` 控制的是 `Run(ctx)` 触发后的默认优雅关闭预算，不覆盖显式 `Shutdown(ctx)` 传入的 `ctx`
 
 ### Scheduler
 
@@ -506,7 +504,7 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 
 ### 生产建议
 
-- 服务主进程优先使用 `Run(signalCtx)`，并配置 `WithShutdownTimeoutOption`
+- 服务主进程优先使用 `Run(signalCtx)`，并配置 `WithShutdownTimeout`
 - `ShutdownTimeout` 应大于业务 handler 的正常耗时上界，否则停机时任务更容易被回推 Redis
 - 如果你的服务框架已经有统一停机预算，直接显式调用 `Shutdown(ctx)`，不要依赖默认预算
 - 对 `Broker` 而言，若停机时不希望无限等待在途投递，应优先调用 `Shutdown(ctx)` 而不是 `Close()`
@@ -516,10 +514,10 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 - 明确区分生产者进程、消费者进程、调度进程，不要把所有角色强塞进一个服务
 - 为不同业务队列配置合理的 `Queues` 权重
 - 配置任务超时、重试次数、唯一窗口，避免无界重试
-- 按业务任务耗时配置 `WithShutdownTimeoutOption`，让优雅停机预算和任务时长匹配
+- 按业务任务耗时配置 `WithShutdownTimeout`，让优雅停机预算和任务时长匹配
 - 为 Redis 配置认证、TLS、连接池和超时，生产优先使用 Sentinel 或 Cluster
-- 通过 `WithLoggerOption` 接入统一日志实现
-- 通过 `WithMiddlewareOption` 接入 tracing、metrics、recover 等中间件
+- 通过 `WithLogger` 接入统一日志实现
+- 通过 `WithMiddleware` 接入 tracing、metrics、recover 等中间件
 - 在服务主进程中使用 `Run(ctx)`，由外层信号管理优雅退出
 
 ## 测试

@@ -38,6 +38,7 @@ type Config struct {
 	IsFailure                func(error) bool
 	Location                 *time.Location
 	Logger                   Logger
+	PingOnStart              bool
 	ShutdownTimeout          time.Duration
 	TaskTimeout              time.Duration
 	Middleware               []asynq.MiddlewareFunc

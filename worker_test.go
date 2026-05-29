@@ -434,7 +434,7 @@ func TestShutdownRespectsContextWhileRunning(t *testing.T) {
 }
 
 func TestRunUsesConfiguredShutdownTimeout(t *testing.T) {
-	cfg, err := NewConfig(WithShutdownTimeoutOption(20 * time.Millisecond))
+	cfg, err := NewConfig(WithShutdownTimeout(20 * time.Millisecond))
 	if err != nil {
 		t.Fatalf("unexpected config error: %v", err)
 	}

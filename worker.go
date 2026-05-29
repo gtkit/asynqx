@@ -56,7 +56,7 @@ func newWorker(cfg Config, factory workerRunnerFactory) (*Worker, error) {
 		return nil, invalidConfigurationError("worker.runner_factory", "must not be nil")
 	}
 
-	runner, err := factory(cfg.clone())
+	runner, err := factory(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +86,15 @@ var defaultWorkerRunnerFactory = func(cfg Config) (workerRunner, error) {
 	redisClient, err := newRedisUniversalClient(cfg.Redis)
 	if err != nil {
 		return nil, err
+	}
+
+	if cfg.PingOnStart {
+		err = pingRedisOnStart(context.Background(), redisClient)
+		if err != nil {
+			_ = redisClient.Close()
+
+			return nil, err
+		}
 	}
 
 	runner := asynq.NewServerFromRedisClient(redisClient, cfg.asynqConfig())

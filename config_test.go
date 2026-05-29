@@ -16,16 +16,11 @@ type stubLogger struct {
 	id string
 }
 
-func (l *stubLogger) Debug(...any)          {}
-func (l *stubLogger) Info(...any)           {}
-func (l *stubLogger) Warn(...any)           {}
-func (l *stubLogger) Error(...any)          {}
-func (l *stubLogger) Fatal(...any)          {}
-func (l *stubLogger) Debugf(string, ...any) {}
-func (l *stubLogger) Infof(string, ...any)  {}
-func (l *stubLogger) Warnf(string, ...any)  {}
-func (l *stubLogger) Errorf(string, ...any) {}
-func (l *stubLogger) Fatalf(string, ...any) {}
+func (l *stubLogger) Debug(...any) {}
+func (l *stubLogger) Info(...any)  {}
+func (l *stubLogger) Warn(...any)  {}
+func (l *stubLogger) Error(...any) {}
+func (l *stubLogger) Fatal(...any) {}
 
 func TestNewConfigDefaults(t *testing.T) {
 	cfg, err := NewConfig()
@@ -48,7 +43,7 @@ func TestNewConfigDefaults(t *testing.T) {
 }
 
 func TestNewConfigSupportsRedisFailoverOption(t *testing.T) {
-	cfg, err := NewConfig(WithRedisFailoverOption(asynq.RedisFailoverClientOpt{
+	cfg, err := NewConfig(WithRedisFailover(asynq.RedisFailoverClientOpt{
 		MasterName:    "primary",
 		SentinelAddrs: []string{"127.0.0.1:26379", "127.0.0.1:26380"},
 		DB:            2,
@@ -72,7 +67,7 @@ func TestNewConfigSupportsRedisFailoverOption(t *testing.T) {
 }
 
 func TestNewConfigSupportsRedisClusterOption(t *testing.T) {
-	cfg, err := NewConfig(WithRedisClusterOption(asynq.RedisClusterClientOpt{
+	cfg, err := NewConfig(WithRedisCluster(asynq.RedisClusterClientOpt{
 		Addrs:        []string{"127.0.0.1:6379", "127.0.0.1:6380"},
 		MaxRedirects: 5,
 	}))
@@ -95,7 +90,7 @@ func TestNewConfigSupportsRedisClusterOption(t *testing.T) {
 }
 
 func TestNewConfigRejectsEmptyRedisFailoverMasterName(t *testing.T) {
-	_, err := NewConfig(WithRedisFailoverOption(asynq.RedisFailoverClientOpt{
+	_, err := NewConfig(WithRedisFailover(asynq.RedisFailoverClientOpt{
 		SentinelAddrs: []string{"127.0.0.1:26379"},
 	}))
 	if !errors.Is(err, ErrInvalidConfiguration) {
@@ -104,14 +99,14 @@ func TestNewConfigRejectsEmptyRedisFailoverMasterName(t *testing.T) {
 }
 
 func TestNewConfigRejectsEmptyRedisClusterAddrs(t *testing.T) {
-	_, err := NewConfig(WithRedisClusterOption(asynq.RedisClusterClientOpt{}))
+	_, err := NewConfig(WithRedisCluster(asynq.RedisClusterClientOpt{}))
 	if !errors.Is(err, ErrInvalidConfiguration) {
 		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
 	}
 }
 
 func TestNewConfigRejectsEmptyRedisClusterAddr(t *testing.T) {
-	_, err := NewConfig(WithRedisClusterOption(asynq.RedisClusterClientOpt{
+	_, err := NewConfig(WithRedisCluster(asynq.RedisClusterClientOpt{
 		Addrs: []string{"127.0.0.1:6379", " "},
 	}))
 	if !errors.Is(err, ErrInvalidConfiguration) {
@@ -120,7 +115,7 @@ func TestNewConfigRejectsEmptyRedisClusterAddr(t *testing.T) {
 }
 
 func TestNewConfigRejectsEmptyRedisSentinelAddr(t *testing.T) {
-	_, err := NewConfig(WithRedisFailoverOption(asynq.RedisFailoverClientOpt{
+	_, err := NewConfig(WithRedisFailover(asynq.RedisFailoverClientOpt{
 		MasterName:    "primary",
 		SentinelAddrs: []string{" "},
 	}))
@@ -130,7 +125,7 @@ func TestNewConfigRejectsEmptyRedisSentinelAddr(t *testing.T) {
 }
 
 func TestNewConfigRejectsNegativeRedisFailoverDB(t *testing.T) {
-	_, err := NewConfig(WithRedisFailoverOption(asynq.RedisFailoverClientOpt{
+	_, err := NewConfig(WithRedisFailover(asynq.RedisFailoverClientOpt{
 		MasterName:    "primary",
 		SentinelAddrs: []string{"127.0.0.1:26379"},
 		DB:            -1,
@@ -144,7 +139,7 @@ func TestNewConfigCopiesRedisSlicesAndTLS(t *testing.T) {
 	tlsConfig := &tls.Config{ServerName: "redis.example"}
 	sentinelAddrs := []string{"127.0.0.1:26379"}
 
-	cfg, err := NewConfig(WithRedisFailoverOption(asynq.RedisFailoverClientOpt{
+	cfg, err := NewConfig(WithRedisFailover(asynq.RedisFailoverClientOpt{
 		MasterName:    "primary",
 		SentinelAddrs: sentinelAddrs,
 		TLSConfig:     tlsConfig,
@@ -174,7 +169,7 @@ func TestNewConfigCopiesRedisClusterSlicesAndTLS(t *testing.T) {
 	tlsConfig := &tls.Config{ServerName: "redis.example"}
 	addrs := []string{"127.0.0.1:6379"}
 
-	cfg, err := NewConfig(WithRedisClusterOption(asynq.RedisClusterClientOpt{
+	cfg, err := NewConfig(WithRedisCluster(asynq.RedisClusterClientOpt{
 		Addrs:     addrs,
 		TLSConfig: tlsConfig,
 	}))
@@ -201,8 +196,8 @@ func TestNewConfigCopiesRedisClusterSlicesAndTLS(t *testing.T) {
 
 func TestNewConfigRejectsSingleNodeOptionAfterCluster(t *testing.T) {
 	_, err := NewConfig(
-		WithRedisClusterOption(asynq.RedisClusterClientOpt{Addrs: []string{"127.0.0.1:6379"}}),
-		WithRedisAddrOption("127.0.0.1:6380"),
+		WithRedisCluster(asynq.RedisClusterClientOpt{Addrs: []string{"127.0.0.1:6379"}}),
+		WithRedisAddr("127.0.0.1:6380"),
 	)
 	if !errors.Is(err, ErrInvalidConfiguration) {
 		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
@@ -211,9 +206,9 @@ func TestNewConfigRejectsSingleNodeOptionAfterCluster(t *testing.T) {
 
 func TestNewConfigAppliesOptions(t *testing.T) {
 	cfg, err := NewConfig(
-		WithRedisAddrOption("127.0.0.1:6380"),
-		WithConcurrencyOption(32),
-		WithLocationOption("Asia/Shanghai"),
+		WithRedisAddr("127.0.0.1:6380"),
+		WithConcurrency(32),
+		WithLocation("Asia/Shanghai"),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -238,7 +233,7 @@ func TestNewConfigAppliesOptions(t *testing.T) {
 }
 
 func TestNewConfigRejectsEmptyRedisAddr(t *testing.T) {
-	if _, err := NewConfig(WithRedisAddrOption("")); err == nil {
+	if _, err := NewConfig(WithRedisAddr("")); err == nil {
 		t.Fatal("expected error for empty redis addr")
 	} else if !errors.Is(err, ErrInvalidConfiguration) {
 		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
@@ -250,7 +245,7 @@ func TestNewConfigRejectsEmptyRedisAddr(t *testing.T) {
 func TestNewConfigCopiesQueuesMap(t *testing.T) {
 	queues := map[string]int{"critical": 2}
 
-	cfg, err := NewConfig(WithQueuesOption(queues))
+	cfg, err := NewConfig(WithQueues(queues))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -300,7 +295,7 @@ func TestConfigCloneCopiesRedisTLSConfig(t *testing.T) {
 }
 
 func TestNewConfigRejectsInvalidLocation(t *testing.T) {
-	if _, err := NewConfig(WithLocationOption("Invalid/Zone_XXX")); err == nil {
+	if _, err := NewConfig(WithLocation("Invalid/Zone_XXX")); err == nil {
 		t.Fatal("expected error for invalid location")
 	} else if !errors.Is(err, ErrInvalidConfiguration) {
 		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
@@ -310,17 +305,17 @@ func TestNewConfigRejectsInvalidLocation(t *testing.T) {
 }
 
 func TestNewConfigRejectsEmptyLocation(t *testing.T) {
-	if _, err := NewConfig(WithLocationOption("")); err == nil {
+	if _, err := NewConfig(WithLocation("")); err == nil {
 		t.Fatal("expected error for empty location")
 	} else if !errors.Is(err, ErrInvalidConfiguration) {
 		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
 	}
 }
 
-func TestWithTLSConfigOptionCopiesTLSConfig(t *testing.T) {
+func TestWithTLSConfigCopiesTLSConfig(t *testing.T) {
 	sourceTLS := &tls.Config{ServerName: "before.example"}
 
-	cfg, err := NewConfig(WithTLSConfigOption(sourceTLS))
+	cfg, err := NewConfig(WithTLSConfig(sourceTLS))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -346,7 +341,7 @@ func TestWithTLSConfigOptionCopiesTLSConfig(t *testing.T) {
 }
 
 func TestNewConfigRejectsNilMiddleware(t *testing.T) {
-	if _, err := NewConfig(WithMiddlewareOption(nil)); err == nil {
+	if _, err := NewConfig(WithMiddleware(nil)); err == nil {
 		t.Fatal("expected error for nil middleware")
 	} else if !errors.Is(err, ErrInvalidConfiguration) {
 		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
@@ -356,7 +351,7 @@ func TestNewConfigRejectsNilMiddleware(t *testing.T) {
 func TestNewConfigAppliesLoggerOption(t *testing.T) {
 	logger := &stubLogger{id: "shared"}
 
-	cfg, err := NewConfig(WithLoggerOption(logger))
+	cfg, err := NewConfig(WithLogger(logger))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -374,8 +369,19 @@ func TestNewConfigAppliesLoggerOption(t *testing.T) {
 	}
 }
 
+func TestNewConfigAppliesPingOnStartOption(t *testing.T) {
+	cfg, err := NewConfig(WithPingOnStart(true))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !cfg.PingOnStart {
+		t.Fatal("expected ping on start to be enabled")
+	}
+}
+
 func TestNewConfigRejectsTooSmallGroupGracePeriod(t *testing.T) {
-	if _, err := NewConfig(WithGroupGracePeriodOption(500 * time.Millisecond)); err == nil {
+	if _, err := NewConfig(WithGroupGracePeriod(500 * time.Millisecond)); err == nil {
 		t.Fatal("expected error for too small group grace period")
 	} else if !errors.Is(err, ErrInvalidConfiguration) {
 		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
@@ -383,7 +389,7 @@ func TestNewConfigRejectsTooSmallGroupGracePeriod(t *testing.T) {
 }
 
 func TestNewConfigAppliesShutdownTimeoutOption(t *testing.T) {
-	cfg, err := NewConfig(WithShutdownTimeoutOption(12 * time.Second))
+	cfg, err := NewConfig(WithShutdownTimeout(12 * time.Second))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -407,47 +413,42 @@ func TestLegacyServerArtifactsRemoved(t *testing.T) {
 	}
 }
 
-func TestOptionsSourceContainsOnlyNewAPIOptions(t *testing.T) {
+func TestOptionsSourceKeepsRecommendedAndDeprecatedOptionNames(t *testing.T) {
 	body, err := os.ReadFile("options.go")
 	if err != nil {
 		t.Fatalf("read options.go: %v", err)
 	}
 
 	source := string(body)
-	legacyMarkers := []string{
-		"type ServerOption",
+	recommendedMarkers := []string{
+		"func WithRedis(",
 		"func WithRedisAddr(",
-		"func WithRedisUser(",
-		"func WithRedisPassword(",
-		"func WithRedisDB(",
-		"func WithRedisPoolSize(",
-		"func WithDialTimeout(",
-		"func WithReadTimeout(",
-		"func WithWriteTimeout(",
-		"func WithTLSConfig(",
 		"func WithConcurrency(",
-		"func WithQueues(",
-		"func WithRetryDelayFunc(",
-		"func WithStrictPriority(",
-		"func WithErrorHandler(",
-		"func WithHealthCheckFunc(",
-		"func WithHealthCheckInterval(",
-		"func WithDelayedTaskCheckInterval(",
-		"func WithGroupGracePeriod(",
-		"func WithGroupMaxDelay(",
-		"func WithGroupMaxSize(",
-		"func WithMiddleware(",
-		"func WithLocation(",
-		"func WithIsFailure(",
-		"func WithConfig(",
-		"func WithServerTaskTimeout(",
+		"func WithDefaultTaskTimeout(",
 		"func WithLogger(",
 	}
 
-	for _, marker := range legacyMarkers {
-		if strings.Contains(source, marker) {
-			t.Fatalf("expected options.go to drop legacy marker %q", marker)
+	for _, marker := range recommendedMarkers {
+		if !strings.Contains(source, marker) {
+			t.Fatalf("expected options.go to contain recommended marker %q", marker)
 		}
+	}
+
+	deprecatedMarkers := []string{
+		"var WithRedisOption = WithRedis",
+		"var WithRedisAddrOption = WithRedisAddr",
+		"var WithConcurrencyOption = WithConcurrency",
+		"var WithTaskTimeoutOption = WithDefaultTaskTimeout",
+	}
+
+	for _, marker := range deprecatedMarkers {
+		if !strings.Contains(source, marker) {
+			t.Fatalf("expected options.go to keep deprecated compatibility marker %q", marker)
+		}
+	}
+
+	if strings.Contains(source, "type ServerOption") {
+		t.Fatal("expected options.go to keep old ServerOption artifact removed")
 	}
 }
 

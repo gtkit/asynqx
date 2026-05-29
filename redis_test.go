@@ -24,3 +24,10 @@ func TestNewRedisUniversalClientRejectsUnsupportedClient(t *testing.T) {
 		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
 	}
 }
+
+func TestPingRedisOptionOnStartRejectsUnsupportedClient(t *testing.T) {
+	err := pingRedisOptionOnStart(nil, invalidRedisConnOpt{})
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
+	}
+}

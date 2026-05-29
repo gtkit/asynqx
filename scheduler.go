@@ -54,7 +54,7 @@ func newScheduler(cfg Config, factory schedulerRunnerFactory) (*Scheduler, error
 		return nil, invalidConfigurationError("scheduler.runner_factory", "must not be nil")
 	}
 
-	runner, err := factory(cfg.clone())
+	runner, err := factory(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +78,15 @@ var defaultSchedulerRunnerFactory = func(cfg Config) (schedulerRunner, error) {
 	redisClient, err := newRedisUniversalClient(cfg.Redis)
 	if err != nil {
 		return nil, err
+	}
+
+	if cfg.PingOnStart {
+		err = pingRedisOnStart(context.Background(), redisClient)
+		if err != nil {
+			_ = redisClient.Close()
+
+			return nil, err
+		}
 	}
 
 	runner := asynq.NewSchedulerFromRedisClient(redisClient, cfg.schedulerOptions())

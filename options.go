@@ -20,8 +20,8 @@ type WorkerOption = ConfigOption
 // SchedulerOption 表示 Scheduler 使用的配置选项。
 type SchedulerOption = ConfigOption
 
-// WithRedisAddrOption 设置共享配置中的 Redis 地址。
-func WithRedisAddrOption(addr string) ConfigOption {
+// WithRedisAddr 设置共享配置中的 Redis 地址。
+func WithRedisAddr(addr string) ConfigOption {
 	return func(cfg *Config) error {
 		opt, err := redisClientOptions(cfg)
 		if err != nil {
@@ -35,8 +35,8 @@ func WithRedisAddrOption(addr string) ConfigOption {
 	}
 }
 
-// WithRedisUserOption 设置共享配置中的 Redis 用户名。
-func WithRedisUserOption(userName string) ConfigOption {
+// WithRedisUser 设置共享配置中的 Redis 用户名。
+func WithRedisUser(userName string) ConfigOption {
 	return func(cfg *Config) error {
 		opt, err := redisClientOptions(cfg)
 		if err != nil {
@@ -50,8 +50,8 @@ func WithRedisUserOption(userName string) ConfigOption {
 	}
 }
 
-// WithRedisPasswordOption 设置共享配置中的 Redis 密码。
-func WithRedisPasswordOption(password string) ConfigOption {
+// WithRedisPassword 设置共享配置中的 Redis 密码。
+func WithRedisPassword(password string) ConfigOption {
 	return func(cfg *Config) error {
 		opt, err := redisClientOptions(cfg)
 		if err != nil {
@@ -65,8 +65,8 @@ func WithRedisPasswordOption(password string) ConfigOption {
 	}
 }
 
-// WithRedisDBOption 设置共享配置中的 Redis 数据库编号。
-func WithRedisDBOption(database int) ConfigOption {
+// WithRedisDB 设置共享配置中的 Redis 数据库编号。
+func WithRedisDB(database int) ConfigOption {
 	return func(cfg *Config) error {
 		opt, err := redisClientOptions(cfg)
 		if err != nil {
@@ -80,8 +80,8 @@ func WithRedisDBOption(database int) ConfigOption {
 	}
 }
 
-// WithRedisPoolSizeOption 设置共享配置中的 Redis 连接池大小。
-func WithRedisPoolSizeOption(size int) ConfigOption {
+// WithRedisPoolSize 设置共享配置中的 Redis 连接池大小。
+func WithRedisPoolSize(size int) ConfigOption {
 	return func(cfg *Config) error {
 		opt, err := redisClientOptions(cfg)
 		if err != nil {
@@ -95,8 +95,8 @@ func WithRedisPoolSizeOption(size int) ConfigOption {
 	}
 }
 
-// WithDialTimeoutOption 设置共享配置中的 Redis 拨号超时。
-func WithDialTimeoutOption(timeout time.Duration) ConfigOption {
+// WithDialTimeout 设置共享配置中的 Redis 拨号超时。
+func WithDialTimeout(timeout time.Duration) ConfigOption {
 	return func(cfg *Config) error {
 		opt, err := redisClientOptions(cfg)
 		if err != nil {
@@ -110,8 +110,8 @@ func WithDialTimeoutOption(timeout time.Duration) ConfigOption {
 	}
 }
 
-// WithReadTimeoutOption 设置共享配置中的 Redis 读取超时。
-func WithReadTimeoutOption(timeout time.Duration) ConfigOption {
+// WithReadTimeout 设置共享配置中的 Redis 读取超时。
+func WithReadTimeout(timeout time.Duration) ConfigOption {
 	return func(cfg *Config) error {
 		opt, err := redisClientOptions(cfg)
 		if err != nil {
@@ -125,8 +125,8 @@ func WithReadTimeoutOption(timeout time.Duration) ConfigOption {
 	}
 }
 
-// WithWriteTimeoutOption 设置共享配置中的 Redis 写入超时。
-func WithWriteTimeoutOption(timeout time.Duration) ConfigOption {
+// WithWriteTimeout 设置共享配置中的 Redis 写入超时。
+func WithWriteTimeout(timeout time.Duration) ConfigOption {
 	return func(cfg *Config) error {
 		opt, err := redisClientOptions(cfg)
 		if err != nil {
@@ -140,8 +140,8 @@ func WithWriteTimeoutOption(timeout time.Duration) ConfigOption {
 	}
 }
 
-// WithTLSConfigOption 设置共享配置中的 Redis TLS 配置。
-func WithTLSConfigOption(cfg *tls.Config) ConfigOption {
+// WithTLSConfig 设置共享配置中的 Redis TLS 配置。
+func WithTLSConfig(cfg *tls.Config) ConfigOption {
 	return func(target *Config) error {
 		opt, err := redisClientOptions(target)
 		if err != nil {
@@ -155,8 +155,8 @@ func WithTLSConfigOption(cfg *tls.Config) ConfigOption {
 	}
 }
 
-// WithRedisOption 设置完整的 Redis 连接配置，支持单机、Sentinel 和 Cluster。
-func WithRedisOption(opt asynq.RedisConnOpt) ConfigOption {
+// WithRedis 设置完整的 Redis 连接配置，支持单机、Sentinel 和 Cluster。
+func WithRedis(opt asynq.RedisConnOpt) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.Redis = cloneRedisOptions(opt)
 
@@ -164,8 +164,8 @@ func WithRedisOption(opt asynq.RedisConnOpt) ConfigOption {
 	}
 }
 
-// WithRedisClientOption 设置单机 Redis 连接配置。
-func WithRedisClientOption(opt asynq.RedisClientOpt) ConfigOption {
+// WithRedisClient 设置单机 Redis 连接配置。
+func WithRedisClient(opt asynq.RedisClientOpt) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.Redis = cloneRedisClientOptions(opt)
 
@@ -173,8 +173,8 @@ func WithRedisClientOption(opt asynq.RedisClientOpt) ConfigOption {
 	}
 }
 
-// WithRedisFailoverOption 设置 Sentinel Redis 连接配置。
-func WithRedisFailoverOption(opt asynq.RedisFailoverClientOpt) ConfigOption {
+// WithRedisFailover 设置 Sentinel Redis 连接配置。
+func WithRedisFailover(opt asynq.RedisFailoverClientOpt) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.Redis = cloneRedisFailoverOptions(opt)
 
@@ -182,8 +182,8 @@ func WithRedisFailoverOption(opt asynq.RedisFailoverClientOpt) ConfigOption {
 	}
 }
 
-// WithRedisClusterOption 设置 Cluster Redis 连接配置。
-func WithRedisClusterOption(opt asynq.RedisClusterClientOpt) ConfigOption {
+// WithRedisCluster 设置 Cluster Redis 连接配置。
+func WithRedisCluster(opt asynq.RedisClusterClientOpt) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.Redis = cloneRedisClusterOptions(opt)
 
@@ -191,8 +191,8 @@ func WithRedisClusterOption(opt asynq.RedisClusterClientOpt) ConfigOption {
 	}
 }
 
-// WithConcurrencyOption 设置共享配置中的并发数。
-func WithConcurrencyOption(concurrency int) ConfigOption {
+// WithConcurrency 设置共享配置中的并发数。
+func WithConcurrency(concurrency int) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.Concurrency = concurrency
 
@@ -200,8 +200,8 @@ func WithConcurrencyOption(concurrency int) ConfigOption {
 	}
 }
 
-// WithQueuesOption 设置共享配置中的队列权重，并复制底层 map。
-func WithQueuesOption(queues map[string]int) ConfigOption {
+// WithQueues 设置共享配置中的队列权重，并复制底层 map。
+func WithQueues(queues map[string]int) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.Queues = copyQueueWeights(queues)
 
@@ -209,8 +209,8 @@ func WithQueuesOption(queues map[string]int) ConfigOption {
 	}
 }
 
-// WithRetryDelayFuncOption 设置共享配置中的重试延迟函数。
-func WithRetryDelayFuncOption(fn asynq.RetryDelayFunc) ConfigOption {
+// WithRetryDelayFunc 设置共享配置中的重试延迟函数。
+func WithRetryDelayFunc(fn asynq.RetryDelayFunc) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.RetryDelayFunc = fn
 
@@ -218,8 +218,8 @@ func WithRetryDelayFuncOption(fn asynq.RetryDelayFunc) ConfigOption {
 	}
 }
 
-// WithStrictPriorityOption 设置共享配置中的严格优先级。
-func WithStrictPriorityOption(val bool) ConfigOption {
+// WithStrictPriority 设置共享配置中的严格优先级。
+func WithStrictPriority(val bool) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.StrictPriority = val
 
@@ -227,8 +227,8 @@ func WithStrictPriorityOption(val bool) ConfigOption {
 	}
 }
 
-// WithErrorHandlerOption 设置共享配置中的错误处理器。
-func WithErrorHandlerOption(fn asynq.ErrorHandler) ConfigOption {
+// WithErrorHandler 设置共享配置中的错误处理器。
+func WithErrorHandler(fn asynq.ErrorHandler) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.ErrorHandler = fn
 
@@ -236,8 +236,8 @@ func WithErrorHandlerOption(fn asynq.ErrorHandler) ConfigOption {
 	}
 }
 
-// WithHealthCheckFuncOption 设置共享配置中的健康检查回调。
-func WithHealthCheckFuncOption(fn func(error)) ConfigOption {
+// WithHealthCheckFunc 设置共享配置中的健康检查回调。
+func WithHealthCheckFunc(fn func(error)) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.HealthCheckFunc = fn
 
@@ -245,8 +245,8 @@ func WithHealthCheckFuncOption(fn func(error)) ConfigOption {
 	}
 }
 
-// WithHealthCheckIntervalOption 设置共享配置中的健康检查间隔。
-func WithHealthCheckIntervalOption(interval time.Duration) ConfigOption {
+// WithHealthCheckInterval 设置共享配置中的健康检查间隔。
+func WithHealthCheckInterval(interval time.Duration) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.HealthCheckInterval = interval
 
@@ -254,8 +254,8 @@ func WithHealthCheckIntervalOption(interval time.Duration) ConfigOption {
 	}
 }
 
-// WithShutdownTimeoutOption 设置共享配置中的优雅关闭超时时间。
-func WithShutdownTimeoutOption(timeout time.Duration) ConfigOption {
+// WithShutdownTimeout 设置共享配置中的优雅关闭超时时间。
+func WithShutdownTimeout(timeout time.Duration) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.ShutdownTimeout = timeout
 
@@ -263,8 +263,8 @@ func WithShutdownTimeoutOption(timeout time.Duration) ConfigOption {
 	}
 }
 
-// WithDelayedTaskCheckIntervalOption 设置共享配置中的延迟任务检查间隔。
-func WithDelayedTaskCheckIntervalOption(interval time.Duration) ConfigOption {
+// WithDelayedTaskCheckInterval 设置共享配置中的延迟任务检查间隔。
+func WithDelayedTaskCheckInterval(interval time.Duration) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.DelayedTaskCheckInterval = interval
 
@@ -272,8 +272,8 @@ func WithDelayedTaskCheckIntervalOption(interval time.Duration) ConfigOption {
 	}
 }
 
-// WithGroupGracePeriodOption 设置共享配置中的聚合宽限期。
-func WithGroupGracePeriodOption(interval time.Duration) ConfigOption {
+// WithGroupGracePeriod 设置共享配置中的聚合宽限期。
+func WithGroupGracePeriod(interval time.Duration) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.GroupGracePeriod = interval
 
@@ -281,8 +281,8 @@ func WithGroupGracePeriodOption(interval time.Duration) ConfigOption {
 	}
 }
 
-// WithGroupMaxDelayOption 设置共享配置中的聚合最大延迟。
-func WithGroupMaxDelayOption(interval time.Duration) ConfigOption {
+// WithGroupMaxDelay 设置共享配置中的聚合最大延迟。
+func WithGroupMaxDelay(interval time.Duration) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.GroupMaxDelay = interval
 
@@ -290,8 +290,8 @@ func WithGroupMaxDelayOption(interval time.Duration) ConfigOption {
 	}
 }
 
-// WithGroupMaxSizeOption 设置共享配置中的聚合最大尺寸。
-func WithGroupMaxSizeOption(size int) ConfigOption {
+// WithGroupMaxSize 设置共享配置中的聚合最大尺寸。
+func WithGroupMaxSize(size int) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.GroupMaxSize = size
 
@@ -299,8 +299,8 @@ func WithGroupMaxSizeOption(size int) ConfigOption {
 	}
 }
 
-// WithMiddlewareOption 设置共享配置中的中间件。
-func WithMiddlewareOption(middlewares ...asynq.MiddlewareFunc) ConfigOption {
+// WithMiddleware 设置共享配置中的中间件。
+func WithMiddleware(middlewares ...asynq.MiddlewareFunc) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.Middleware = append([]asynq.MiddlewareFunc(nil), middlewares...)
 
@@ -308,8 +308,8 @@ func WithMiddlewareOption(middlewares ...asynq.MiddlewareFunc) ConfigOption {
 	}
 }
 
-// WithLocationOption 设置共享配置中的时区位置。
-func WithLocationOption(name string) ConfigOption {
+// WithLocation 设置共享配置中的时区位置。
+func WithLocation(name string) ConfigOption {
 	return func(cfg *Config) error {
 		if strings.TrimSpace(name) == "" {
 			return invalidConfigurationError("location", "must not be empty")
@@ -326,8 +326,8 @@ func WithLocationOption(name string) ConfigOption {
 	}
 }
 
-// WithIsFailureOption 设置共享配置中的失败判定函数。
-func WithIsFailureOption(fn func(error) bool) ConfigOption {
+// WithIsFailure 设置共享配置中的失败判定函数。
+func WithIsFailure(fn func(error) bool) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.IsFailure = fn
 
@@ -335,8 +335,8 @@ func WithIsFailureOption(fn func(error) bool) ConfigOption {
 	}
 }
 
-// WithTaskTimeoutOption 设置共享配置中的默认任务超时时间。
-func WithTaskTimeoutOption(timeout time.Duration) ConfigOption {
+// WithDefaultTaskTimeout 设置共享配置中的默认任务超时时间。
+func WithDefaultTaskTimeout(timeout time.Duration) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.TaskTimeout = timeout
 
@@ -344,14 +344,178 @@ func WithTaskTimeoutOption(timeout time.Duration) ConfigOption {
 	}
 }
 
-// WithLoggerOption 设置共享配置中的日志实现。
-func WithLoggerOption(log Logger) ConfigOption {
+// WithLogger 设置共享配置中的日志实现。
+func WithLogger(log Logger) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.Logger = log
 
 		return nil
 	}
 }
+
+// WithPingOnStart 设置组件创建时是否立即探测 Redis 连接。
+func WithPingOnStart(enabled bool) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.PingOnStart = enabled
+
+		return nil
+	}
+}
+
+// WithRedisOption 已弃用：请改用 WithRedis。
+//
+// Deprecated: 请改用 WithRedis。
+var WithRedisOption = WithRedis
+
+// WithRedisAddrOption 已弃用：请改用 WithRedisAddr。
+//
+// Deprecated: 请改用 WithRedisAddr。
+var WithRedisAddrOption = WithRedisAddr
+
+// WithRedisUserOption 已弃用：请改用 WithRedisUser。
+//
+// Deprecated: 请改用 WithRedisUser。
+var WithRedisUserOption = WithRedisUser
+
+// WithRedisPasswordOption 已弃用：请改用 WithRedisPassword。
+//
+// Deprecated: 请改用 WithRedisPassword。
+var WithRedisPasswordOption = WithRedisPassword
+
+// WithRedisDBOption 已弃用：请改用 WithRedisDB。
+//
+// Deprecated: 请改用 WithRedisDB。
+var WithRedisDBOption = WithRedisDB
+
+// WithRedisPoolSizeOption 已弃用：请改用 WithRedisPoolSize。
+//
+// Deprecated: 请改用 WithRedisPoolSize。
+var WithRedisPoolSizeOption = WithRedisPoolSize
+
+// WithDialTimeoutOption 已弃用：请改用 WithDialTimeout。
+//
+// Deprecated: 请改用 WithDialTimeout。
+var WithDialTimeoutOption = WithDialTimeout
+
+// WithReadTimeoutOption 已弃用：请改用 WithReadTimeout。
+//
+// Deprecated: 请改用 WithReadTimeout。
+var WithReadTimeoutOption = WithReadTimeout
+
+// WithWriteTimeoutOption 已弃用：请改用 WithWriteTimeout。
+//
+// Deprecated: 请改用 WithWriteTimeout。
+var WithWriteTimeoutOption = WithWriteTimeout
+
+// WithTLSConfigOption 已弃用：请改用 WithTLSConfig。
+//
+// Deprecated: 请改用 WithTLSConfig。
+var WithTLSConfigOption = WithTLSConfig
+
+// WithRedisClientOption 已弃用：请改用 WithRedisClient 或 WithRedis。
+//
+// Deprecated: 请改用 WithRedisClient 或 WithRedis。
+var WithRedisClientOption = WithRedisClient
+
+// WithRedisFailoverOption 已弃用：请改用 WithRedisFailover 或 WithRedis。
+//
+// Deprecated: 请改用 WithRedisFailover 或 WithRedis。
+var WithRedisFailoverOption = WithRedisFailover
+
+// WithRedisClusterOption 已弃用：请改用 WithRedisCluster 或 WithRedis。
+//
+// Deprecated: 请改用 WithRedisCluster 或 WithRedis。
+var WithRedisClusterOption = WithRedisCluster
+
+// WithConcurrencyOption 已弃用：请改用 WithConcurrency。
+//
+// Deprecated: 请改用 WithConcurrency。
+var WithConcurrencyOption = WithConcurrency
+
+// WithQueuesOption 已弃用：请改用 WithQueues。
+//
+// Deprecated: 请改用 WithQueues。
+var WithQueuesOption = WithQueues
+
+// WithRetryDelayFuncOption 已弃用：请改用 WithRetryDelayFunc。
+//
+// Deprecated: 请改用 WithRetryDelayFunc。
+var WithRetryDelayFuncOption = WithRetryDelayFunc
+
+// WithStrictPriorityOption 已弃用：请改用 WithStrictPriority。
+//
+// Deprecated: 请改用 WithStrictPriority。
+var WithStrictPriorityOption = WithStrictPriority
+
+// WithErrorHandlerOption 已弃用：请改用 WithErrorHandler。
+//
+// Deprecated: 请改用 WithErrorHandler。
+var WithErrorHandlerOption = WithErrorHandler
+
+// WithHealthCheckFuncOption 已弃用：请改用 WithHealthCheckFunc。
+//
+// Deprecated: 请改用 WithHealthCheckFunc。
+var WithHealthCheckFuncOption = WithHealthCheckFunc
+
+// WithHealthCheckIntervalOption 已弃用：请改用 WithHealthCheckInterval。
+//
+// Deprecated: 请改用 WithHealthCheckInterval。
+var WithHealthCheckIntervalOption = WithHealthCheckInterval
+
+// WithShutdownTimeoutOption 已弃用：请改用 WithShutdownTimeout。
+//
+// Deprecated: 请改用 WithShutdownTimeout。
+var WithShutdownTimeoutOption = WithShutdownTimeout
+
+// WithDelayedTaskCheckIntervalOption 已弃用：请改用 WithDelayedTaskCheckInterval。
+//
+// Deprecated: 请改用 WithDelayedTaskCheckInterval。
+var WithDelayedTaskCheckIntervalOption = WithDelayedTaskCheckInterval
+
+// WithGroupGracePeriodOption 已弃用：请改用 WithGroupGracePeriod。
+//
+// Deprecated: 请改用 WithGroupGracePeriod。
+var WithGroupGracePeriodOption = WithGroupGracePeriod
+
+// WithGroupMaxDelayOption 已弃用：请改用 WithGroupMaxDelay。
+//
+// Deprecated: 请改用 WithGroupMaxDelay。
+var WithGroupMaxDelayOption = WithGroupMaxDelay
+
+// WithGroupMaxSizeOption 已弃用：请改用 WithGroupMaxSize。
+//
+// Deprecated: 请改用 WithGroupMaxSize。
+var WithGroupMaxSizeOption = WithGroupMaxSize
+
+// WithMiddlewareOption 已弃用：请改用 WithMiddleware。
+//
+// Deprecated: 请改用 WithMiddleware。
+var WithMiddlewareOption = WithMiddleware
+
+// WithLocationOption 已弃用：请改用 WithLocation。
+//
+// Deprecated: 请改用 WithLocation。
+var WithLocationOption = WithLocation
+
+// WithIsFailureOption 已弃用：请改用 WithIsFailure。
+//
+// Deprecated: 请改用 WithIsFailure。
+var WithIsFailureOption = WithIsFailure
+
+// WithTaskTimeoutOption 已弃用：请改用 WithDefaultTaskTimeout。
+//
+// Deprecated: 请改用 WithDefaultTaskTimeout。
+var WithTaskTimeoutOption = WithDefaultTaskTimeout
+
+// WithLoggerOption 已弃用：请改用 WithLogger。
+//
+// Deprecated: 请改用 WithLogger。
+var WithLoggerOption = WithLogger
+
+// WithPingOnStartOption 已弃用：请改用 WithPingOnStart。
+//
+// Deprecated: 请改用 WithPingOnStart。
+var WithPingOnStartOption = WithPingOnStart
 
 func redisClientOptions(cfg *Config) (asynq.RedisClientOpt, error) {
 	opt, ok := cfg.Redis.(asynq.RedisClientOpt)

@@ -2,6 +2,7 @@ package asynqx_test
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/gtkit/asynqx"
@@ -12,9 +13,11 @@ type exampleEmailPayload struct {
 }
 
 func ExampleNewBroker() {
-	broker, err := asynqx.NewBroker(asynqx.WithRedisAddrOption("127.0.0.1:6379"))
-	_ = broker
-	_ = err
+	broker, err := asynqx.NewBroker(asynqx.WithRedisAddr("127.0.0.1:6379"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer broker.Close()
 
 	// _, err = broker.Enqueue(
 	// 	context.Background(),
@@ -23,11 +26,17 @@ func ExampleNewBroker() {
 	// 	asynqx.WithTaskQueue("critical"),
 	// 	asynqx.WithTaskTimeout(30*time.Second),
 	// )
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
 }
 
 func ExampleHandle() {
-	worker, err := asynqx.NewWorker(asynqx.WithRedisAddrOption("127.0.0.1:6379"))
-	_ = err
+	worker, err := asynqx.NewWorker(asynqx.WithRedisAddr("127.0.0.1:6379"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer worker.Shutdown(context.Background())
 
 	err = asynqx.Handle(worker, "email:welcome", func(ctx context.Context, payload exampleEmailPayload) error {
 		_ = ctx
@@ -35,15 +44,20 @@ func ExampleHandle() {
 
 		return nil
 	})
-	_ = err
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func ExampleScheduler_Register() {
 	scheduler, err := asynqx.NewScheduler(
-		asynqx.WithRedisAddrOption("127.0.0.1:6379"),
-		asynqx.WithLocationOption("Asia/Shanghai"),
+		asynqx.WithRedisAddr("127.0.0.1:6379"),
+		asynqx.WithLocation("Asia/Shanghai"),
 	)
-	_ = err
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer scheduler.Shutdown(context.Background())
 
 	_, err = scheduler.Register(
 		context.Background(),
@@ -52,6 +66,8 @@ func ExampleScheduler_Register() {
 		exampleEmailPayload{UserID: "u-1001"},
 		asynqx.WithTaskQueue("default"),
 	)
-	_ = err
+	if err != nil {
+		log.Fatal(err)
+	}
 	_ = time.Second
 }

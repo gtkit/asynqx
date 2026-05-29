@@ -193,7 +193,7 @@ func TestSchedulerRegisterEncodesPayloadAndPassesOptions(t *testing.T) {
 }
 
 func TestSchedulerRegisterAppliesDefaultTaskTimeout(t *testing.T) {
-	cfg, err := NewConfig(WithTaskTimeoutOption(20 * time.Second))
+	cfg, err := NewConfig(WithDefaultTaskTimeout(20 * time.Second))
 	if err != nil {
 		t.Fatalf("unexpected config error: %v", err)
 	}
@@ -399,7 +399,7 @@ func TestSchedulerShutdownRespectsContextWhileStartInProgress(t *testing.T) {
 }
 
 func TestSchedulerRunUsesConfiguredShutdownTimeout(t *testing.T) {
-	cfg, err := NewConfig(WithShutdownTimeoutOption(20 * time.Millisecond))
+	cfg, err := NewConfig(WithShutdownTimeout(20 * time.Millisecond))
 	if err != nil {
 		t.Fatalf("unexpected config error: %v", err)
 	}
