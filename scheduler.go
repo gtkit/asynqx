@@ -141,6 +141,7 @@ func (r *managedSchedulerRunner) Shutdown() {
 }
 
 // Register 注册一个周期任务，并返回底层调度器生成的 entryID。
+// payload 会被序列化为 JSON 后随任务投递。
 func (s *Scheduler) Register(
 	ctx context.Context,
 	spec string,

@@ -8,7 +8,7 @@ import (
 	"github.com/hibiken/asynq"
 )
 
-const taskOptionsCapacity = 8
+const taskOptionsCapacity = 10
 
 // TaskOption 表示任务投递时的可选参数。
 type TaskOption func(*taskOptions) error
