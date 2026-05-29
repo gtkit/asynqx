@@ -4,4 +4,3 @@ logs/
 /config/env/pro.yml
 /workspace/
 .Ds_Store
-.golangci.yml

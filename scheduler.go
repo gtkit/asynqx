@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -56,6 +57,7 @@ func newScheduler(cfg Config, factory schedulerRunnerFactory) (*Scheduler, error
 	if err != nil {
 		return nil, err
 	}
+
 	if runner == nil {
 		return nil, invalidConfigurationError("scheduler.runner", "must not be nil")
 	}
@@ -72,34 +74,83 @@ func newScheduler(cfg Config, factory schedulerRunnerFactory) (*Scheduler, error
 }
 
 var defaultSchedulerRunnerFactory = func(cfg Config) (schedulerRunner, error) {
-	runner := asynq.NewScheduler(cfg.Redis, cfg.schedulerOptions())
+	redisClient, err := newRedisUniversalClient(cfg.Redis)
+	if err != nil {
+		return nil, err
+	}
+
+	runner := asynq.NewSchedulerFromRedisClient(redisClient, cfg.schedulerOptions())
 	if runner == nil {
+		closeErr := redisClient.Close()
+		if closeErr != nil {
+			return nil, invalidConfigurationError("scheduler.runner", closeErr.Error())
+		}
+
 		return nil, invalidConfigurationError("scheduler.runner", "must not be nil")
 	}
-	return runner, nil
+
+	return &managedSchedulerRunner{runner: runner, redisClient: redisClient}, nil
+}
+
+type managedSchedulerRunner struct {
+	runner      *asynq.Scheduler
+	redisClient redis.UniversalClient
+	closeOnce   sync.Once
+}
+
+func (r *managedSchedulerRunner) Register(spec string, task *asynq.Task, opts ...asynq.Option) (string, error) {
+	return r.runner.Register(spec, task, opts...)
+}
+
+func (r *managedSchedulerRunner) Unregister(entryID string) error {
+	return r.runner.Unregister(entryID)
+}
+
+func (r *managedSchedulerRunner) Start() error {
+	return r.runner.Start()
+}
+
+func (r *managedSchedulerRunner) Shutdown() {
+	r.closeOnce.Do(func() {
+		r.runner.Shutdown()
+		_ = r.redisClient.Close()
+	})
 }
 
 // Register 注册一个周期任务，并返回底层调度器生成的 entryID。
-func (s *Scheduler) Register(ctx context.Context, spec, taskType string, payload any, opts ...TaskOption) (string, error) {
+func (s *Scheduler) Register(
+	ctx context.Context,
+	spec string,
+	taskType string,
+	payload any,
+	opts ...TaskOption,
+) (string, error) {
 	if s == nil {
 		return "", invalidArgumentError("scheduler", "must not be nil")
 	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+
 	if strings.TrimSpace(spec) == "" {
 		return "", invalidArgumentError("spec", "must not be empty")
 	}
+
 	if strings.TrimSpace(taskType) == "" {
 		return "", invalidArgumentError("task_type", "must not be empty")
 	}
+
 	if err := s.beginOperation(); err != nil {
 		return "", err
 	}
+
 	defer s.endOperation()
+
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -113,9 +164,11 @@ func (s *Scheduler) Register(ctx context.Context, spec, taskType string, payload
 	if err != nil {
 		return "", err
 	}
+
 	asynqOpts = applyDefaultTaskTimeout(asynqOpts, s.cfg.TaskTimeout)
 
 	task := asynq.NewTask(taskType, body)
+
 	return s.runner.Register(spec, task, asynqOpts...)
 }
 
@@ -124,20 +177,29 @@ func (s *Scheduler) Unregister(ctx context.Context, entryID string) error {
 	if s == nil {
 		return invalidArgumentError("scheduler", "must not be nil")
 	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := ctx.Err(); err != nil {
+
+	err := ctx.Err()
+	if err != nil {
 		return err
 	}
+
 	if strings.TrimSpace(entryID) == "" {
 		return invalidArgumentError("entry_id", "must not be empty")
 	}
-	if err := s.beginOperation(); err != nil {
+
+	err = s.beginOperation()
+	if err != nil {
 		return err
 	}
+
 	defer s.endOperation()
-	if err := ctx.Err(); err != nil {
+
+	err = ctx.Err()
+	if err != nil {
 		return err
 	}
 
@@ -149,12 +211,16 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	if s == nil {
 		return invalidArgumentError("scheduler", "must not be nil")
 	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := ctx.Err(); err != nil {
+
+	err := ctx.Err()
+	if err != nil {
 		return err
 	}
+
 	if !s.state.CompareAndSwap(schedulerStateIdle, schedulerStateStarting) {
 		switch s.state.Load() {
 		case schedulerStateStopping, schedulerStateStopped:
@@ -164,20 +230,26 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		}
 	}
 
-	if err := s.runner.Start(); err != nil {
+	err = s.runner.Start()
+	if err != nil {
 		if s.state.Load() == schedulerStateStopping {
 			s.beginStop(false)
+
 			return ErrSchedulerStopped
 		}
+
 		s.state.Store(schedulerStateIdle)
+
 		return err
 	}
 
 	if s.state.CompareAndSwap(schedulerStateStarting, schedulerStateRunning) {
 		return nil
 	}
+
 	if s.state.Load() == schedulerStateStopping {
 		s.beginStop(false)
+
 		return ErrSchedulerStopped
 	}
 
@@ -185,21 +257,27 @@ func (s *Scheduler) Start(ctx context.Context) error {
 }
 
 // Run 启动调度器，并在 ctx 取消后触发 Shutdown。
+// 如果 ctx 取消后关闭成功，Run 返回 nil；调用方需要区分退出原因时应读取 ctx.Err()。
+// Run 触发的关闭流程使用 Config.ShutdownTimeout 作为默认等待预算。
 func (s *Scheduler) Run(ctx context.Context) error {
 	if s == nil {
 		return invalidArgumentError("scheduler", "must not be nil")
 	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	if err := s.Start(ctx); err != nil {
+	err := s.Start(ctx)
+	if err != nil {
 		return err
 	}
 
 	<-ctx.Done()
+
 	shutdownCtx, cancel := s.shutdownContext()
 	defer cancel()
+
 	return s.Shutdown(shutdownCtx)
 }
 
@@ -208,6 +286,7 @@ func (s *Scheduler) Shutdown(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -217,6 +296,7 @@ func (s *Scheduler) Shutdown(ctx context.Context) error {
 		case schedulerStateIdle:
 			if s.state.CompareAndSwap(schedulerStateIdle, schedulerStateStopping) {
 				s.beginStop(false)
+
 				return nil
 			}
 		case schedulerStateStarting:
@@ -226,6 +306,7 @@ func (s *Scheduler) Shutdown(ctx context.Context) error {
 		case schedulerStateRunning:
 			if s.state.CompareAndSwap(schedulerStateRunning, schedulerStateStopping) {
 				s.beginStop(true)
+
 				return s.waitStopped(ctx)
 			}
 		case schedulerStateStopping, schedulerStateStopped:
@@ -235,22 +316,21 @@ func (s *Scheduler) Shutdown(ctx context.Context) error {
 }
 
 func (s *Scheduler) beginOperation() error {
-	for {
-		switch s.state.Load() {
-		case schedulerStateIdle, schedulerStateStarting, schedulerStateRunning:
-		default:
-			return ErrSchedulerStopped
-		}
+	switch s.state.Load() {
+	case schedulerStateIdle, schedulerStateStarting, schedulerStateRunning:
+	default:
+		return ErrSchedulerStopped
+	}
 
-		s.activeOperations.Add()
+	s.activeOperations.Add()
 
-		switch s.state.Load() {
-		case schedulerStateIdle, schedulerStateStarting, schedulerStateRunning:
-			return nil
-		default:
-			s.activeOperations.Done()
-			return ErrSchedulerStopped
-		}
+	switch s.state.Load() {
+	case schedulerStateIdle, schedulerStateStarting, schedulerStateRunning:
+		return nil
+	default:
+		s.activeOperations.Done()
+
+		return ErrSchedulerStopped
 	}
 }
 
@@ -262,8 +342,10 @@ func (s *Scheduler) beginStop(async bool) {
 	s.stopOnce.Do(func() {
 		if async {
 			go s.finishStop()
+
 			return
 		}
+
 		s.finishStop()
 	})
 }

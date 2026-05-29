@@ -9,6 +9,7 @@ import (
 
 	"github.com/gtkit/json"
 	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -33,7 +34,7 @@ type Worker struct {
 }
 
 type workerRunner interface {
-	Start(asynq.Handler) error
+	Start(handler asynq.Handler) error
 	Shutdown()
 }
 
@@ -58,6 +59,7 @@ func newWorker(cfg Config, factory workerRunnerFactory) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if runner == nil {
 		return nil, invalidConfigurationError("worker.runner", "must not be nil")
 	}
@@ -80,11 +82,39 @@ func newWorker(cfg Config, factory workerRunnerFactory) (*Worker, error) {
 }
 
 var defaultWorkerRunnerFactory = func(cfg Config) (workerRunner, error) {
-	runner := asynq.NewServer(cfg.Redis, cfg.asynqConfig())
+	redisClient, err := newRedisUniversalClient(cfg.Redis)
+	if err != nil {
+		return nil, err
+	}
+
+	runner := asynq.NewServerFromRedisClient(redisClient, cfg.asynqConfig())
 	if runner == nil {
+		closeErr := redisClient.Close()
+		if closeErr != nil {
+			return nil, fmt.Errorf("%w: %w", invalidConfigurationError("worker.runner", "must not be nil"), closeErr)
+		}
+
 		return nil, invalidConfigurationError("worker.runner", "must not be nil")
 	}
-	return runner, nil
+
+	return &managedWorkerRunner{runner: runner, redisClient: redisClient}, nil
+}
+
+type managedWorkerRunner struct {
+	runner      *asynq.Server
+	redisClient redis.UniversalClient
+	closeOnce   sync.Once
+}
+
+func (r *managedWorkerRunner) Start(handler asynq.Handler) error {
+	return r.runner.Start(handler)
+}
+
+func (r *managedWorkerRunner) Shutdown() {
+	r.closeOnce.Do(func() {
+		r.runner.Shutdown()
+		_ = r.redisClient.Close()
+	})
 }
 
 // HandleRaw 在 Worker 启动前注册原始 asynq 处理器。
@@ -92,15 +122,20 @@ func (w *Worker) HandleRaw(taskType string, handler func(context.Context, *asynq
 	if w == nil {
 		return invalidArgumentError("worker", "must not be nil")
 	}
+
 	if strings.TrimSpace(taskType) == "" {
 		return invalidArgumentError("task_type", "must not be empty")
 	}
+
 	if handler == nil {
 		return invalidArgumentError("handler", "must not be nil")
 	}
-	if err := w.beginRegistration(); err != nil {
+
+	err := w.beginRegistration()
+	if err != nil {
 		return err
 	}
+
 	defer w.endRegistration()
 
 	if _, loaded := w.handlers.LoadOrStore(taskType, struct{}{}); loaded {
@@ -108,6 +143,7 @@ func (w *Worker) HandleRaw(taskType string, handler func(context.Context, *asynq
 	}
 
 	w.mux.HandleFunc(taskType, handler)
+
 	return nil
 }
 
@@ -116,15 +152,19 @@ func Handle[T any](worker *Worker, taskType string, handler func(context.Context
 	if worker == nil {
 		return invalidArgumentError("worker", "must not be nil")
 	}
+
 	if handler == nil {
 		return invalidArgumentError("handler", "must not be nil")
 	}
 
 	return worker.HandleRaw(taskType, func(ctx context.Context, task *asynq.Task) error {
 		var payload T
-		if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+
+		err := json.Unmarshal(task.Payload(), &payload)
+		if err != nil {
 			return fmt.Errorf("unmarshal task payload: %w: %w", err, asynq.SkipRetry)
 		}
+
 		return handler(ctx, payload)
 	})
 }
@@ -134,12 +174,16 @@ func (w *Worker) Start(ctx context.Context) error {
 	if w == nil {
 		return invalidArgumentError("worker", "must not be nil")
 	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := ctx.Err(); err != nil {
+
+	err := ctx.Err()
+	if err != nil {
 		return err
 	}
+
 	if !w.state.CompareAndSwap(workerStateIdle, workerStateStarting) {
 		switch w.state.Load() {
 		case workerStateStopped, workerStateStopping:
@@ -150,53 +194,70 @@ func (w *Worker) Start(ctx context.Context) error {
 	}
 
 	w.registrations.Wait()
-	if err := ctx.Err(); err != nil {
+
+	err = ctx.Err()
+	if err != nil {
 		if w.state.CompareAndSwap(workerStateStarting, workerStateIdle) {
 			return err
 		}
+
 		if w.state.Load() == workerStateStopping {
 			w.markStopped()
+
 			return ErrWorkerStopped
 		}
+
 		return err
 	}
 
-	if err := w.runner.Start(w.mux); err != nil {
+	err = w.runner.Start(w.mux)
+	if err != nil {
 		if w.state.Load() == workerStateStopping {
 			w.markStopped()
+
 			return ErrWorkerStopped
 		}
+
 		w.state.Store(workerStateIdle)
+
 		return err
 	}
 
 	if w.state.CompareAndSwap(workerStateStarting, workerStateRunning) {
 		return nil
 	}
+
 	if w.state.Load() == workerStateStopping {
 		w.beginStop(false)
+
 		return ErrWorkerStopped
 	}
 
 	return nil
 }
 
-// Run 启动 Worker 并在 ctx 取消后触发 Shutdown。
+// Run 启动 Worker，并在 ctx 取消后触发 Shutdown。
+// 如果 ctx 取消后关闭成功，Run 返回 nil；调用方需要区分退出原因时应读取 ctx.Err()。
+// Run 触发的关闭流程使用 Config.ShutdownTimeout 作为默认等待预算。
 func (w *Worker) Run(ctx context.Context) error {
 	if w == nil {
 		return invalidArgumentError("worker", "must not be nil")
 	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	if err := w.Start(ctx); err != nil {
+	err := w.Start(ctx)
+	if err != nil {
 		return err
 	}
 
 	<-ctx.Done()
+
 	shutdownCtx, cancel := w.shutdownContext()
 	defer cancel()
+
 	return w.Shutdown(shutdownCtx)
 }
 
@@ -205,6 +266,7 @@ func (w *Worker) Shutdown(ctx context.Context) error {
 	if w == nil {
 		return nil
 	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -213,7 +275,8 @@ func (w *Worker) Shutdown(ctx context.Context) error {
 		switch w.state.Load() {
 		case workerStateIdle:
 			if w.state.CompareAndSwap(workerStateIdle, workerStateStopping) {
-				w.markStopped()
+				w.beginStop(false)
+
 				return nil
 			}
 		case workerStateStarting:
@@ -223,6 +286,7 @@ func (w *Worker) Shutdown(ctx context.Context) error {
 		case workerStateRunning:
 			if w.state.CompareAndSwap(workerStateRunning, workerStateStopping) {
 				w.beginStop(true)
+
 				return w.waitStopped(ctx)
 			}
 		case workerStateStopping, workerStateStopped:
@@ -232,27 +296,27 @@ func (w *Worker) Shutdown(ctx context.Context) error {
 }
 
 func (w *Worker) beginRegistration() error {
-	for {
-		switch w.state.Load() {
-		case workerStateStopping, workerStateStopped:
-			return ErrWorkerStopped
-		case workerStateIdle:
-		default:
-			return ErrWorkerAlreadyRunning
-		}
+	switch w.state.Load() {
+	case workerStateStopping, workerStateStopped:
+		return ErrWorkerStopped
+	case workerStateIdle:
+	default:
+		return ErrWorkerAlreadyRunning
+	}
 
-		w.registrations.Add()
+	w.registrations.Add()
 
-		switch w.state.Load() {
-		case workerStateStopping, workerStateStopped:
-			w.registrations.Done()
-			return ErrWorkerStopped
-		case workerStateIdle:
-			return nil
-		default:
-			w.registrations.Done()
-			return ErrWorkerAlreadyRunning
-		}
+	switch w.state.Load() {
+	case workerStateStopping, workerStateStopped:
+		w.registrations.Done()
+
+		return ErrWorkerStopped
+	case workerStateIdle:
+		return nil
+	default:
+		w.registrations.Done()
+
+		return ErrWorkerAlreadyRunning
 	}
 }
 
@@ -264,8 +328,10 @@ func (w *Worker) beginStop(async bool) {
 	w.stopOnce.Do(func() {
 		if async {
 			go w.finishStop()
+
 			return
 		}
+
 		w.finishStop()
 	})
 }

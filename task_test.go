@@ -89,6 +89,7 @@ func TestBuildTaskOptionsRejectsInvalidValues(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected invalid task option error")
 			}
+
 			if !errors.Is(err, ErrInvalidTaskOption) {
 				t.Fatalf("expected ErrInvalidTaskOption, got %v", err)
 			}
@@ -136,6 +137,7 @@ func assertAsynqOption(t *testing.T, opt asynq.Option, wantType asynq.OptionType
 	if opt.Type() != wantType {
 		t.Fatalf("expected option type %v, got %v", wantType, opt.Type())
 	}
+
 	if opt.Value() != wantValue {
 		t.Fatalf("expected option value %#v, got %#v", wantValue, opt.Value())
 	}
@@ -158,6 +160,7 @@ func assertOptionSet(t *testing.T, opts []asynq.Option, want map[asynq.OptionTyp
 		if !ok {
 			t.Fatalf("expected option type %v to exist", optionType)
 		}
+
 		if value != wantValue {
 			t.Fatalf("expected option value %#v for type %v, got %#v", wantValue, optionType, value)
 		}

@@ -21,7 +21,7 @@ type Broker struct {
 }
 
 type brokerClient interface {
-	EnqueueContext(context.Context, *asynq.Task, ...asynq.Option) (*asynq.TaskInfo, error)
+	EnqueueContext(ctx context.Context, task *asynq.Task, opts ...asynq.Option) (*asynq.TaskInfo, error)
 	Close() error
 }
 
@@ -38,9 +38,11 @@ func NewBroker(opts ...BrokerOption) (*Broker, error) {
 		return nil, err
 	}
 
-	return newBroker(cfg, func(cfg Config) (brokerClient, error) {
-		return asynq.NewClient(cfg.Redis), nil
-	})
+	return newBroker(cfg, defaultBrokerClientFactory)
+}
+
+var defaultBrokerClientFactory brokerClientFactory = func(cfg Config) (brokerClient, error) {
+	return asynq.NewClient(cfg.Redis), nil
 }
 
 func newBroker(cfg Config, factory brokerClientFactory) (*Broker, error) {
@@ -52,6 +54,7 @@ func newBroker(cfg Config, factory brokerClientFactory) (*Broker, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if client == nil {
 		return nil, invalidConfigurationError("broker.client", "must not be nil")
 	}
@@ -67,13 +70,20 @@ func newBroker(cfg Config, factory brokerClientFactory) (*Broker, error) {
 }
 
 // Enqueue 编码 payload 并投递任务。
-func (b *Broker) Enqueue(ctx context.Context, taskType string, payload any, opts ...TaskOption) (*asynq.TaskInfo, error) {
+func (b *Broker) Enqueue(
+	ctx context.Context,
+	taskType string,
+	payload any,
+	opts ...TaskOption,
+) (*asynq.TaskInfo, error) {
 	if b == nil {
 		return nil, ErrClosed
 	}
+
 	if strings.TrimSpace(taskType) == "" {
 		return nil, invalidArgumentError("task_type", "must not be empty")
 	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -93,9 +103,11 @@ func (b *Broker) Enqueue(ctx context.Context, taskType string, payload any, opts
 	if err != nil {
 		return nil, err
 	}
+
 	taskOpts = applyDefaultTaskTimeout(taskOpts, b.cfg.TaskTimeout)
 
 	task := asynq.NewTask(taskType, body)
+
 	return clientRef.client.EnqueueContext(ctx, task, taskOpts...)
 }
 
@@ -109,9 +121,11 @@ func (b *Broker) Shutdown(ctx context.Context) error {
 	if b == nil {
 		return nil
 	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
 	if b.closed.CompareAndSwap(false, true) {
 		clientRef := b.client.Swap(nil)
 		go b.finishClose(clientRef)
@@ -121,6 +135,7 @@ func (b *Broker) Shutdown(ctx context.Context) error {
 	case <-b.closeDone:
 		b.closeMu.Lock()
 		defer b.closeMu.Unlock()
+
 		return b.closeErr
 	case <-ctx.Done():
 		return ctx.Err()
@@ -128,39 +143,41 @@ func (b *Broker) Shutdown(ctx context.Context) error {
 }
 
 func (b *Broker) acquireClient() (*brokerClientRef, func(), error) {
-	for {
-		if b.closed.Load() {
-			return nil, nil, ErrClosed
-		}
-
-		b.active.Add()
-
-		if b.closed.Load() {
-			b.active.Done()
-			return nil, nil, ErrClosed
-		}
-
-		clientRef := b.client.Load()
-		if clientRef == nil || clientRef.client == nil {
-			b.active.Done()
-			return nil, nil, ErrClosed
-		}
-
-		return clientRef, func() {
-			b.active.Done()
-		}, nil
+	if b.closed.Load() {
+		return nil, nil, ErrClosed
 	}
+
+	b.active.Add()
+
+	if b.closed.Load() {
+		b.active.Done()
+
+		return nil, nil, ErrClosed
+	}
+
+	clientRef := b.client.Load()
+	if clientRef == nil || clientRef.client == nil {
+		b.active.Done()
+
+		return nil, nil, ErrClosed
+	}
+
+	return clientRef, func() {
+		b.active.Done()
+	}, nil
 }
 
 func (b *Broker) finishClose(clientRef *brokerClientRef) {
 	defer close(b.closeDone)
 
 	b.active.Wait()
+
 	if clientRef == nil || clientRef.client == nil {
 		return
 	}
 
 	err := clientRef.client.Close()
+
 	b.closeMu.Lock()
 	b.closeErr = err
 	b.closeMu.Unlock()

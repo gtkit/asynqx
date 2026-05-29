@@ -23,6 +23,7 @@ type stubWorkerRunner struct {
 
 func (r *stubWorkerRunner) Start(asynq.Handler) error {
 	r.startCalls.Add(1)
+
 	if r.started != nil {
 		select {
 		case <-r.started:
@@ -30,14 +31,17 @@ func (r *stubWorkerRunner) Start(asynq.Handler) error {
 			close(r.started)
 		}
 	}
+
 	if r.blockStart != nil {
 		<-r.blockStart
 	}
+
 	return r.startErr
 }
 
 func (r *stubWorkerRunner) Shutdown() {
 	r.shutdownCalls.Add(1)
+
 	if r.shutdownStart != nil {
 		select {
 		case <-r.shutdownStart:
@@ -45,6 +49,7 @@ func (r *stubWorkerRunner) Shutdown() {
 			close(r.shutdownStart)
 		}
 	}
+
 	if r.blockShutdown != nil {
 		<-r.blockShutdown
 	}
@@ -71,6 +76,7 @@ func TestHandleBeforeStartProcessesDecodedPayload(t *testing.T) {
 	worker := newTestWorker(t, &stubWorkerRunner{})
 
 	var called atomic.Bool
+
 	if err := Handle(worker, "email:welcome", func(ctx context.Context, payload workerTestPayload) error {
 		called.Store(true)
 
@@ -93,7 +99,9 @@ func TestHandleBeforeStartProcessesDecodedPayload(t *testing.T) {
 	}
 
 	task := asynq.NewTask("email:welcome", body)
-	if err := worker.mux.ProcessTask(context.Background(), task); err != nil {
+
+	err = worker.mux.ProcessTask(context.Background(), task)
+	if err != nil {
 		t.Fatalf("expected task to be processed, got %v", err)
 	}
 
@@ -102,17 +110,42 @@ func TestHandleBeforeStartProcessesDecodedPayload(t *testing.T) {
 	}
 }
 
+func TestNewWorkerUsesConfiguredFactory(t *testing.T) {
+	runner := &stubWorkerRunner{}
+
+	restore := setWorkerRunnerFactoryForTest(func(Config) (workerRunner, error) {
+		return runner, nil
+	})
+	defer restore()
+
+	worker, err := NewWorker()
+	if err != nil {
+		t.Fatalf("unexpected worker error: %v", err)
+	}
+
+	err = worker.Shutdown(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected shutdown error: %v", err)
+	}
+
+	if got := runner.shutdownCalls.Load(); got != 1 {
+		t.Fatalf("expected configured factory runner to be shut down once, got %d", got)
+	}
+}
+
 func TestHandleReturnsSkipRetryOnInvalidPayload(t *testing.T) {
 	worker := newTestWorker(t, &stubWorkerRunner{})
 
 	if err := Handle(worker, "email:welcome", func(context.Context, workerTestPayload) error {
 		t.Fatal("handler should not be called for invalid payload")
+
 		return nil
 	}); err != nil {
 		t.Fatalf("unexpected register error: %v", err)
 	}
 
 	task := asynq.NewTask("email:welcome", []byte("{"))
+
 	err := worker.mux.ProcessTask(context.Background(), task)
 	if !errors.Is(err, asynq.SkipRetry) {
 		t.Fatalf("expected SkipRetry, got %v", err)
@@ -156,20 +189,37 @@ func TestShutdownIsIdempotent(t *testing.T) {
 	runner := &stubWorkerRunner{}
 	worker := newTestWorker(t, runner)
 
-	if err := worker.Start(context.Background()); err != nil {
+	err := worker.Start(context.Background())
+	if err != nil {
 		t.Fatalf("unexpected start error: %v", err)
 	}
 
-	if err := worker.Shutdown(context.Background()); err != nil {
+	err = worker.Shutdown(context.Background())
+	if err != nil {
 		t.Fatalf("unexpected shutdown error: %v", err)
 	}
 
-	if err := worker.Shutdown(context.Background()); err != nil {
+	err = worker.Shutdown(context.Background())
+	if err != nil {
 		t.Fatalf("unexpected second shutdown error: %v", err)
 	}
 
 	if got := runner.shutdownCalls.Load(); got != 1 {
 		t.Fatalf("expected shutdown to be called once, got %d", got)
+	}
+}
+
+func TestShutdownBeforeStartClosesWorkerRunner(t *testing.T) {
+	runner := &stubWorkerRunner{}
+	worker := newTestWorker(t, runner)
+
+	err := worker.Shutdown(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected shutdown error: %v", err)
+	}
+
+	if got := runner.shutdownCalls.Load(); got != 1 {
+		t.Fatalf("expected idle shutdown to close runner once, got %d", got)
 	}
 }
 
@@ -181,6 +231,7 @@ func TestRunCancelsAndTriggersShutdown(t *testing.T) {
 	defer cancel()
 
 	runErr := make(chan error, 1)
+
 	go func() {
 		runErr <- worker.Run(ctx)
 	}()
@@ -188,7 +239,8 @@ func TestRunCancelsAndTriggersShutdown(t *testing.T) {
 	<-runner.started
 	cancel()
 
-	if err := <-runErr; err != nil {
+	err := <-runErr
+	if err != nil {
 		t.Fatalf("unexpected run error: %v", err)
 	}
 
@@ -205,6 +257,7 @@ func TestShutdownWhileStartInProgressStopsWorker(t *testing.T) {
 	worker := newTestWorker(t, runner)
 
 	startErr := make(chan error, 1)
+
 	go func() {
 		startErr <- worker.Start(context.Background())
 	}()
@@ -212,17 +265,20 @@ func TestShutdownWhileStartInProgressStopsWorker(t *testing.T) {
 	<-runner.started
 
 	shutdownErr := make(chan error, 1)
+
 	go func() {
 		shutdownErr <- worker.Shutdown(context.Background())
 	}()
 
 	close(runner.blockStart)
 
-	if err := <-shutdownErr; err != nil {
+	err := <-shutdownErr
+	if err != nil {
 		t.Fatalf("unexpected shutdown error: %v", err)
 	}
 
-	if err := <-startErr; err != nil && !errors.Is(err, ErrWorkerStopped) {
+	err = <-startErr
+	if err != nil && !errors.Is(err, ErrWorkerStopped) {
 		t.Fatalf("expected nil or ErrWorkerStopped, got %v", err)
 	}
 
@@ -253,21 +309,24 @@ func TestShutdownRespectsContextWhileRunning(t *testing.T) {
 	}
 	worker := newTestWorker(t, runner)
 
-	if err := worker.Start(context.Background()); err != nil {
+	err := worker.Start(context.Background())
+	if err != nil {
 		t.Fatalf("unexpected start error: %v", err)
 	}
 
 	shutdownCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if err := worker.Shutdown(shutdownCtx); !errors.Is(err, context.Canceled) {
+	err = worker.Shutdown(shutdownCtx)
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation error, got %v", err)
 	}
 
 	<-runner.shutdownStart
 	close(runner.blockShutdown)
 
-	if err := worker.Shutdown(context.Background()); err != nil {
+	err = worker.Shutdown(context.Background())
+	if err != nil {
 		t.Fatalf("unexpected shutdown wait error: %v", err)
 	}
 }
@@ -283,6 +342,7 @@ func TestRunUsesConfiguredShutdownTimeout(t *testing.T) {
 		blockShutdown: make(chan struct{}),
 		shutdownStart: make(chan struct{}),
 	}
+
 	worker, err := newWorker(cfg, func(Config) (workerRunner, error) {
 		return runner, nil
 	})
@@ -294,6 +354,7 @@ func TestRunUsesConfiguredShutdownTimeout(t *testing.T) {
 	defer cancel()
 
 	runErr := make(chan error, 1)
+
 	go func() {
 		runErr <- worker.Run(ctx)
 	}()
@@ -302,7 +363,8 @@ func TestRunUsesConfiguredShutdownTimeout(t *testing.T) {
 	cancel()
 	<-runner.shutdownStart
 
-	if err := <-runErr; !errors.Is(err, context.DeadlineExceeded) {
+	err = <-runErr
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected deadline exceeded from shutdown timeout, got %v", err)
 	}
 

@@ -11,6 +11,7 @@ type activityCounter struct {
 func newActivityCounter() activityCounter {
 	zeroCh := make(chan struct{})
 	close(zeroCh)
+
 	return activityCounter{zeroCh: zeroCh}
 }
 
@@ -21,6 +22,7 @@ func (c *activityCounter) Add() {
 	if c.count == 0 {
 		c.zeroCh = make(chan struct{})
 	}
+
 	c.count++
 }
 

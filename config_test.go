@@ -23,7 +23,9 @@ func (l *stubLogger) Error(...any)          {}
 func (l *stubLogger) Fatal(...any)          {}
 func (l *stubLogger) Debugf(string, ...any) {}
 func (l *stubLogger) Infof(string, ...any)  {}
+func (l *stubLogger) Warnf(string, ...any)  {}
 func (l *stubLogger) Errorf(string, ...any) {}
+func (l *stubLogger) Fatalf(string, ...any) {}
 
 func TestNewConfigDefaults(t *testing.T) {
 	cfg, err := NewConfig()
@@ -31,12 +33,179 @@ func TestNewConfigDefaults(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.Redis.Addr != defaultRedisAddress {
-		t.Fatalf("expected default redis addr %q, got %q", defaultRedisAddress, cfg.Redis.Addr)
+	clientOpt, ok := cfg.Redis.(asynq.RedisClientOpt)
+	if !ok {
+		t.Fatalf("expected redis client option, got %T", cfg.Redis)
+	}
+
+	if clientOpt.Addr != defaultRedisAddress {
+		t.Fatalf("expected default redis addr %q, got %q", defaultRedisAddress, clientOpt.Addr)
 	}
 
 	if cfg.Concurrency != defaultConcurrency {
 		t.Fatalf("expected default concurrency %d, got %d", defaultConcurrency, cfg.Concurrency)
+	}
+}
+
+func TestNewConfigSupportsRedisFailoverOption(t *testing.T) {
+	cfg, err := NewConfig(WithRedisFailoverOption(asynq.RedisFailoverClientOpt{
+		MasterName:    "primary",
+		SentinelAddrs: []string{"127.0.0.1:26379", "127.0.0.1:26380"},
+		DB:            2,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	failover, ok := cfg.Redis.(asynq.RedisFailoverClientOpt)
+	if !ok {
+		t.Fatalf("expected redis failover option, got %T", cfg.Redis)
+	}
+
+	if failover.MasterName != "primary" {
+		t.Fatalf("expected master name primary, got %q", failover.MasterName)
+	}
+
+	if len(failover.SentinelAddrs) != 2 {
+		t.Fatalf("expected copied sentinel addrs, got %v", failover.SentinelAddrs)
+	}
+}
+
+func TestNewConfigSupportsRedisClusterOption(t *testing.T) {
+	cfg, err := NewConfig(WithRedisClusterOption(asynq.RedisClusterClientOpt{
+		Addrs:        []string{"127.0.0.1:6379", "127.0.0.1:6380"},
+		MaxRedirects: 5,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cluster, ok := cfg.Redis.(asynq.RedisClusterClientOpt)
+	if !ok {
+		t.Fatalf("expected redis cluster option, got %T", cfg.Redis)
+	}
+
+	if cluster.MaxRedirects != 5 {
+		t.Fatalf("expected max redirects 5, got %d", cluster.MaxRedirects)
+	}
+
+	if len(cluster.Addrs) != 2 {
+		t.Fatalf("expected copied cluster addrs, got %v", cluster.Addrs)
+	}
+}
+
+func TestNewConfigRejectsEmptyRedisFailoverMasterName(t *testing.T) {
+	_, err := NewConfig(WithRedisFailoverOption(asynq.RedisFailoverClientOpt{
+		SentinelAddrs: []string{"127.0.0.1:26379"},
+	}))
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
+	}
+}
+
+func TestNewConfigRejectsEmptyRedisClusterAddrs(t *testing.T) {
+	_, err := NewConfig(WithRedisClusterOption(asynq.RedisClusterClientOpt{}))
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
+	}
+}
+
+func TestNewConfigRejectsEmptyRedisClusterAddr(t *testing.T) {
+	_, err := NewConfig(WithRedisClusterOption(asynq.RedisClusterClientOpt{
+		Addrs: []string{"127.0.0.1:6379", " "},
+	}))
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
+	}
+}
+
+func TestNewConfigRejectsEmptyRedisSentinelAddr(t *testing.T) {
+	_, err := NewConfig(WithRedisFailoverOption(asynq.RedisFailoverClientOpt{
+		MasterName:    "primary",
+		SentinelAddrs: []string{" "},
+	}))
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
+	}
+}
+
+func TestNewConfigRejectsNegativeRedisFailoverDB(t *testing.T) {
+	_, err := NewConfig(WithRedisFailoverOption(asynq.RedisFailoverClientOpt{
+		MasterName:    "primary",
+		SentinelAddrs: []string{"127.0.0.1:26379"},
+		DB:            -1,
+	}))
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
+	}
+}
+
+func TestNewConfigCopiesRedisSlicesAndTLS(t *testing.T) {
+	tlsConfig := &tls.Config{ServerName: "redis.example"}
+	sentinelAddrs := []string{"127.0.0.1:26379"}
+
+	cfg, err := NewConfig(WithRedisFailoverOption(asynq.RedisFailoverClientOpt{
+		MasterName:    "primary",
+		SentinelAddrs: sentinelAddrs,
+		TLSConfig:     tlsConfig,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sentinelAddrs[0] = "127.0.0.1:26380"
+	tlsConfig.ServerName = "mutated.example"
+
+	failover, ok := cfg.Redis.(asynq.RedisFailoverClientOpt)
+	if !ok {
+		t.Fatalf("expected redis failover option, got %T", cfg.Redis)
+	}
+
+	if failover.SentinelAddrs[0] != "127.0.0.1:26379" {
+		t.Fatalf("expected sentinel addrs to be copied, got %v", failover.SentinelAddrs)
+	}
+
+	if failover.TLSConfig == nil || failover.TLSConfig.ServerName != "redis.example" {
+		t.Fatalf("expected tls config to be copied, got %#v", failover.TLSConfig)
+	}
+}
+
+func TestNewConfigCopiesRedisClusterSlicesAndTLS(t *testing.T) {
+	tlsConfig := &tls.Config{ServerName: "redis.example"}
+	addrs := []string{"127.0.0.1:6379"}
+
+	cfg, err := NewConfig(WithRedisClusterOption(asynq.RedisClusterClientOpt{
+		Addrs:     addrs,
+		TLSConfig: tlsConfig,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	addrs[0] = "127.0.0.1:6380"
+	tlsConfig.ServerName = "mutated.example"
+
+	cluster, ok := cfg.Redis.(asynq.RedisClusterClientOpt)
+	if !ok {
+		t.Fatalf("expected redis cluster option, got %T", cfg.Redis)
+	}
+
+	if cluster.Addrs[0] != "127.0.0.1:6379" {
+		t.Fatalf("expected cluster addrs to be copied, got %v", cluster.Addrs)
+	}
+
+	if cluster.TLSConfig == nil || cluster.TLSConfig.ServerName != "redis.example" {
+		t.Fatalf("expected tls config to be copied, got %#v", cluster.TLSConfig)
+	}
+}
+
+func TestNewConfigRejectsSingleNodeOptionAfterCluster(t *testing.T) {
+	_, err := NewConfig(
+		WithRedisClusterOption(asynq.RedisClusterClientOpt{Addrs: []string{"127.0.0.1:6379"}}),
+		WithRedisAddrOption("127.0.0.1:6380"),
+	)
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
 	}
 }
 
@@ -50,8 +219,13 @@ func TestNewConfigAppliesOptions(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.Redis.Addr != "127.0.0.1:6380" {
-		t.Fatalf("expected redis addr to be overridden, got %q", cfg.Redis.Addr)
+	clientOpt, ok := cfg.Redis.(asynq.RedisClientOpt)
+	if !ok {
+		t.Fatalf("expected redis client option, got %T", cfg.Redis)
+	}
+
+	if clientOpt.Addr != "127.0.0.1:6380" {
+		t.Fatalf("expected redis addr to be overridden, got %q", clientOpt.Addr)
 	}
 
 	if cfg.Concurrency != 32 {
@@ -107,16 +281,21 @@ func TestConfigCloneCopiesRedisTLSConfig(t *testing.T) {
 	cloned := cfg.clone()
 	sourceTLS.ServerName = "after.example"
 
-	if cloned.Redis.TLSConfig == nil {
+	clonedClientOpt, ok := cloned.Redis.(asynq.RedisClientOpt)
+	if !ok {
+		t.Fatalf("expected redis client option, got %T", cloned.Redis)
+	}
+
+	if clonedClientOpt.TLSConfig == nil {
 		t.Fatal("expected tls config to be set")
 	}
 
-	if cloned.Redis.TLSConfig == sourceTLS {
+	if clonedClientOpt.TLSConfig == sourceTLS {
 		t.Fatal("expected tls config pointer to be copied")
 	}
 
-	if cloned.Redis.TLSConfig.ServerName != "before.example" {
-		t.Fatalf("expected copied tls config to keep original server name, got %q", cloned.Redis.TLSConfig.ServerName)
+	if clonedClientOpt.TLSConfig.ServerName != "before.example" {
+		t.Fatalf("expected copied tls config to keep original server name, got %q", clonedClientOpt.TLSConfig.ServerName)
 	}
 }
 
@@ -127,6 +306,42 @@ func TestNewConfigRejectsInvalidLocation(t *testing.T) {
 		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
 	} else if !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("expected ErrInvalidConfig alias to match, got %v", err)
+	}
+}
+
+func TestNewConfigRejectsEmptyLocation(t *testing.T) {
+	if _, err := NewConfig(WithLocationOption("")); err == nil {
+		t.Fatal("expected error for empty location")
+	} else if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
+	}
+}
+
+func TestWithTLSConfigOptionCopiesTLSConfig(t *testing.T) {
+	sourceTLS := &tls.Config{ServerName: "before.example"}
+
+	cfg, err := NewConfig(WithTLSConfigOption(sourceTLS))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sourceTLS.ServerName = "after.example"
+
+	clientOpt, ok := cfg.Redis.(asynq.RedisClientOpt)
+	if !ok {
+		t.Fatalf("expected redis client option, got %T", cfg.Redis)
+	}
+
+	if clientOpt.TLSConfig == nil {
+		t.Fatal("expected tls config to be set")
+	}
+
+	if clientOpt.TLSConfig == sourceTLS {
+		t.Fatal("expected tls config pointer to be copied")
+	}
+
+	if clientOpt.TLSConfig.ServerName != "before.example" {
+		t.Fatalf("expected copied tls config to keep original server name, got %q", clientOpt.TLSConfig.ServerName)
 	}
 }
 

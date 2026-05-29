@@ -5,6 +5,7 @@
 - `Broker`：投递任务
 - `Worker`：消费任务
 - `Scheduler`：注册周期任务
+- `Inspector`：检查队列状态
 
 它的目标不是再包一层“大全对象”，而是提供更符合 Go 风格的 API、更清晰的生命周期语义，以及更容易在服务中落地的配置方式。
 
@@ -26,6 +27,7 @@
 - 泛型任务处理器注册
 - 原始 `asynq.Task` 处理器注册
 - 周期任务注册与取消
+- 队列状态检查器接入
 - 幂等关闭
 - 对配置错误、参数错误、状态错误提供明确错误类型
 
@@ -174,6 +176,28 @@ func main() {
 }
 ```
 
+### 4. 创建 Inspector
+
+```go
+package main
+
+import (
+	"log"
+
+	"github.com/gtkit/asynqx"
+)
+
+func main() {
+	inspector, err := asynqx.NewInspector(
+		asynqx.WithRedisAddrOption("127.0.0.1:6379"),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer inspector.Close()
+}
+```
+
 ## 架构说明
 
 ### Broker
@@ -193,6 +217,20 @@ func main() {
 - `Shutdown(ctx)` 允许调用方为关闭等待设置超时
 - 关闭后再次投递返回 `ErrClosed`
 - `Enqueue` 支持 `context.Context`
+
+### Inspector
+
+`Inspector` 负责创建底层 `asynq.Inspector`，用于运维检查队列、任务、重试和归档状态。
+
+公开方法：
+
+- `NewInspector(opts ...ConfigOption) (*Inspector, error)`
+- `(*Inspector).Close() error`
+
+语义：
+
+- `Inspector` 使用与 `Broker`、`Worker`、`Scheduler` 相同的 Redis 配置
+- 调用方不再使用时应调用 `Close`
 
 ### Worker
 
@@ -239,8 +277,12 @@ func main() {
 
 ### 共享配置选项
 
-这些选项可同时用于 `NewBroker`、`NewWorker`、`NewScheduler`：
+这些选项可同时用于 `NewBroker`、`NewWorker`、`NewScheduler`、`NewInspector`：
 
+- `WithRedisOption(opt asynq.RedisConnOpt)`
+- `WithRedisClientOption(opt asynq.RedisClientOpt)`
+- `WithRedisFailoverOption(opt asynq.RedisFailoverClientOpt)`
+- `WithRedisClusterOption(opt asynq.RedisClusterClientOpt)`
 - `WithRedisAddrOption(addr string)`
 - `WithRedisUserOption(userName string)`
 - `WithRedisPasswordOption(password string)`
@@ -252,6 +294,56 @@ func main() {
 - `WithTLSConfigOption(cfg *tls.Config)`
 - `WithLocationOption(name string)`
 - `WithLoggerOption(log Logger)`
+
+### Redis 部署形态
+
+默认配置使用单机 Redis。生产环境可以直接传入 asynq 原生连接配置：
+
+```go
+worker, err := asynqx.NewWorker(
+	asynqx.WithRedisFailoverOption(asynq.RedisFailoverClientOpt{
+		MasterName:    "primary",
+		SentinelAddrs: []string{"10.0.0.1:26379", "10.0.0.2:26379", "10.0.0.3:26379"},
+		Username:      "app",
+		Password:      "secret",
+		DB:            0,
+	}),
+)
+```
+
+```go
+broker, err := asynqx.NewBroker(
+	asynqx.WithRedisClusterOption(asynq.RedisClusterClientOpt{
+		Addrs:    []string{"10.0.1.1:6379", "10.0.1.2:6379", "10.0.1.3:6379"},
+		Username: "app",
+		Password: "secret",
+	}),
+)
+```
+
+`WithRedisAddrOption`、`WithRedisUserOption`、`WithRedisPasswordOption` 等便捷选项只适用于单机 Redis。已经使用 Sentinel 或 Cluster 配置后，不应再叠加这些单机字段选项。
+
+### gtkit/logger 接入示例
+
+`Logger` 兼容 asynq 的基础日志接口，并补充格式化方法。可以在业务层放一个轻量适配器：
+
+```go
+type gtkitLoggerAdapter struct {
+	log *logger.Logger
+}
+
+func (l gtkitLoggerAdapter) Debug(args ...any) { l.log.Debug(args...) }
+func (l gtkitLoggerAdapter) Info(args ...any)  { l.log.Info(args...) }
+func (l gtkitLoggerAdapter) Warn(args ...any)  { l.log.Warn(args...) }
+func (l gtkitLoggerAdapter) Error(args ...any) { l.log.Error(args...) }
+func (l gtkitLoggerAdapter) Fatal(args ...any) { l.log.Fatal(args...) }
+
+func (l gtkitLoggerAdapter) Debugf(format string, args ...any) { l.log.Debugf(format, args...) }
+func (l gtkitLoggerAdapter) Infof(format string, args ...any)  { l.log.Infof(format, args...) }
+func (l gtkitLoggerAdapter) Warnf(format string, args ...any)  { l.log.Warnf(format, args...) }
+func (l gtkitLoggerAdapter) Errorf(format string, args ...any) { l.log.Errorf(format, args...) }
+func (l gtkitLoggerAdapter) Fatalf(format string, args ...any) { l.log.Fatalf(format, args...) }
+```
 
 ### Worker 相关配置
 
@@ -384,7 +476,9 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 - 调用方主动调用 `Shutdown(ctx)` 时，以调用方传入的 `ctx` 为准
 - 调用方使用 `Run(ctx)` 时，`ctx` 负责“何时开始停机”
 - `Run(ctx)` 进入停机阶段后，默认关闭等待预算来自 `WithShutdownTimeoutOption`
+- 默认 `ShutdownTimeout` 是 `30s`
 - `WithShutdownTimeoutOption(0)` 表示不额外设置默认关闭超时，内部会使用 `context.Background()`
+- 如果 `Run(ctx)` 因 `ctx` 取消而触发停机且关闭成功，返回值是 `nil`；调用方需要区分退出原因时，应在外层读取传入的 `ctx.Err()`
 
 ### Broker
 
@@ -422,9 +516,8 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 - 明确区分生产者进程、消费者进程、调度进程，不要把所有角色强塞进一个服务
 - 为不同业务队列配置合理的 `Queues` 权重
 - 配置任务超时、重试次数、唯一窗口，避免无界重试
-- 为 `Worker` 配置 `WithShutdownTimeoutOption`，让优雅停机预算和任务时长匹配
-- 为 `Scheduler` 配置 `WithShutdownTimeoutOption`，避免周期调度进程在退出时无限等待
-- 为 Redis 配置认证、TLS、连接池和超时
+- 按业务任务耗时配置 `WithShutdownTimeoutOption`，让优雅停机预算和任务时长匹配
+- 为 Redis 配置认证、TLS、连接池和超时，生产优先使用 Sentinel 或 Cluster
 - 通过 `WithLoggerOption` 接入统一日志实现
 - 通过 `WithMiddlewareOption` 接入 tracing、metrics、recover 等中间件
 - 在服务主进程中使用 `Run(ctx)`，由外层信号管理优雅退出

@@ -8,5 +8,7 @@ type Logger interface {
 	asynq.Logger
 	Debugf(template string, args ...any)
 	Infof(format string, args ...any)
+	Warnf(format string, args ...any)
 	Errorf(template string, args ...any)
+	Fatalf(format string, args ...any)
 }

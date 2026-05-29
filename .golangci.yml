@@ -59,7 +59,19 @@ linters:
   # Disable specific linter.
   # https://golangci-lint.run/usage/linters/#disabled-by-default
   disable:
-    ## List of linters to disable.
+    - containedctx
+    - contextcheck
+    - exhaustruct
+    - gochecknoglobals
+    - gosmopolitan
+    - ireturn
+    - noinlineerr
+    - paralleltest
+    - tagliatelle
+    - testableexamples
+    - testpackage
+    - wrapcheck
+    - wsl
   settings:
     asasalint:
       # To specify a set of function names to exclude.
@@ -142,6 +154,15 @@ linters:
           paramsOnly: false
         underef:
           skipRecvDeref: false
+    depguard:
+      rules:
+        main:
+          allow:
+            - $gostd
+            - github.com/gtkit/asynqx
+            - github.com/gtkit/json
+            - github.com/hibiken/asynq
+            - github.com/redis/go-redis/v9
     gomodguard:
       blocked:
         modules:
@@ -228,22 +249,22 @@ issues:
   # much better don't allow issues in new code.
   #
   # Default: false
-  new: true
+  new: false
   # Show only new issues created after the best common ancestor (merge-base against HEAD).
   # Default: ""
-  new-from-merge-base: main
+  new-from-merge-base: ""
   # Show only new issues created after git revision `REV`.
   # Default: ""
-  new-from-rev: HEAD
+  new-from-rev: ""
   # Show only new issues created in git patch with set file path.
   # Default: ""
-  new-from-patch: path/to/patch/file
+  new-from-patch: ""
   # Show issues in any part of update files (requires new-from-rev or new-from-patch).
   # Default: false
-  whole-files: true
+  whole-files: false
   # Fix found issues (if it's supported by the linter).
   # Default: false
-  fix: true
+  fix: false
 formatters:
   # Enable specific formatter.
   # Default: [] (uses standard Go formatting)

@@ -8,6 +8,8 @@ import (
 	"github.com/hibiken/asynq"
 )
 
+const taskOptionsCapacity = 8
+
 // TaskOption 表示任务投递时的可选参数。
 type TaskOption func(*taskOptions) error
 
@@ -38,8 +40,10 @@ func WithTaskQueue(queue string) TaskOption {
 		if strings.TrimSpace(queue) == "" {
 			return invalidTaskOptionError("queue", "must not be empty")
 		}
+
 		opts.queue = queue
 		opts.hasQueue = true
+
 		return nil
 	}
 }
@@ -50,8 +54,10 @@ func WithTaskTimeout(timeout time.Duration) TaskOption {
 		if timeout < 0 {
 			return invalidTaskOptionError("timeout", "must be >= 0")
 		}
+
 		opts.timeout = timeout
 		opts.hasTimeout = true
+
 		return nil
 	}
 }
@@ -62,8 +68,10 @@ func WithTaskDeadline(deadline time.Time) TaskOption {
 		if deadline.IsZero() {
 			return invalidTaskOptionError("deadline", "must not be zero")
 		}
+
 		opts.deadline = deadline
 		opts.hasDeadline = true
+
 		return nil
 	}
 }
@@ -75,10 +83,12 @@ func WithTaskDelay(delay time.Duration) TaskOption {
 		if delay < 0 {
 			return invalidTaskOptionError("delay", "must be >= 0")
 		}
+
 		opts.delay = delay
 		opts.hasDelay = true
 		opts.processAt = time.Time{}
 		opts.hasProcessAt = false
+
 		return nil
 	}
 }
@@ -90,10 +100,12 @@ func WithTaskProcessAt(processAt time.Time) TaskOption {
 		if processAt.IsZero() {
 			return invalidTaskOptionError("process_at", "must not be zero")
 		}
+
 		opts.processAt = processAt
 		opts.hasProcessAt = true
 		opts.delay = 0
 		opts.hasDelay = false
+
 		return nil
 	}
 }
@@ -104,8 +116,10 @@ func WithTaskMaxRetry(maxRetry int) TaskOption {
 		if maxRetry < 0 {
 			return invalidTaskOptionError("max_retry", "must be >= 0")
 		}
+
 		opts.maxRetry = maxRetry
 		opts.hasMaxRetry = true
+
 		return nil
 	}
 }
@@ -116,8 +130,10 @@ func WithTaskUnique(ttl time.Duration) TaskOption {
 		if ttl < time.Second {
 			return invalidTaskOptionError("unique", "must be >= 1s")
 		}
+
 		opts.uniqueTTL = ttl
 		opts.hasUnique = true
+
 		return nil
 	}
 }
@@ -128,8 +144,10 @@ func WithTaskRetention(retention time.Duration) TaskOption {
 		if retention <= 0 {
 			return invalidTaskOptionError("retention", "must be > 0")
 		}
+
 		opts.retention = retention
 		opts.hasRetention = true
+
 		return nil
 	}
 }
@@ -140,8 +158,10 @@ func WithTaskID(taskID string) TaskOption {
 		if strings.TrimSpace(taskID) == "" {
 			return invalidTaskOptionError("task_id", "must not be empty")
 		}
+
 		opts.taskID = taskID
 		opts.hasTaskID = true
+
 		return nil
 	}
 }
@@ -157,35 +177,44 @@ func buildTaskOptions(opts ...TaskOption) ([]asynq.Option, error) {
 		if opt == nil {
 			continue
 		}
-		if err := opt(&resolved); err != nil {
+
+		err := opt(&resolved)
+		if err != nil {
 			return nil, err
 		}
 	}
 
-	built := make([]asynq.Option, 0, 8)
+	built := make([]asynq.Option, 0, taskOptionsCapacity)
 	if resolved.hasQueue {
 		built = append(built, asynq.Queue(resolved.queue))
 	}
+
 	if resolved.hasTimeout {
 		built = append(built, asynq.Timeout(resolved.timeout))
 	}
+
 	if resolved.hasDeadline {
 		built = append(built, asynq.Deadline(resolved.deadline))
 	}
+
 	if resolved.hasProcessAt {
 		built = append(built, asynq.ProcessAt(resolved.processAt))
 	} else if resolved.hasDelay {
 		built = append(built, asynq.ProcessIn(resolved.delay))
 	}
+
 	if resolved.hasMaxRetry {
 		built = append(built, asynq.MaxRetry(resolved.maxRetry))
 	}
+
 	if resolved.hasUnique {
 		built = append(built, asynq.Unique(resolved.uniqueTTL))
 	}
+
 	if resolved.hasRetention {
 		built = append(built, asynq.Retention(resolved.retention))
 	}
+
 	if resolved.hasTaskID {
 		built = append(built, asynq.TaskID(resolved.taskID))
 	}

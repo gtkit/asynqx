@@ -3,6 +3,9 @@ package asynqx
 import (
 	"crypto/tls"
 	"fmt"
+	"maps"
+	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,6 +15,7 @@ import (
 const (
 	defaultRedisAddress = "127.0.0.1:6379"
 	defaultTaskTimeout  = 5 * time.Minute
+	defaultShutdownTime = 30 * time.Second
 	defaultConcurrency  = 10
 	defaultRedisDB      = 0
 )
@@ -19,7 +23,7 @@ const (
 // Config 表示 Broker、Worker 和 Scheduler 共享的基础配置。
 // 该配置在构造完成后应视为只读，用于统一创建底层 asynq 组件。
 type Config struct {
-	Redis                    asynq.RedisClientOpt
+	Redis                    asynq.RedisConnOpt
 	Concurrency              int
 	Queues                   map[string]int
 	RetryDelayFunc           asynq.RetryDelayFunc
@@ -43,17 +47,22 @@ type Config struct {
 // 调用方应通过 ConfigOption 传入可选配置，非法配置会返回统一错误。
 func NewConfig(opts ...ConfigOption) (Config, error) {
 	cfg := defaultConfig()
+
 	for _, opt := range opts {
 		if opt == nil {
 			continue
 		}
-		if err := opt(&cfg); err != nil {
+
+		err := opt(&cfg)
+		if err != nil {
 			return Config{}, err
 		}
 	}
 
 	cfg = cfg.clone()
-	if err := cfg.validate(); err != nil {
+
+	err := cfg.validate()
+	if err != nil {
 		return Config{}, err
 	}
 
@@ -66,9 +75,10 @@ func defaultConfig() Config {
 			Addr: defaultRedisAddress,
 			DB:   defaultRedisDB,
 		},
-		Concurrency: defaultConcurrency,
-		Location:    time.Local,
-		TaskTimeout: defaultTaskTimeout,
+		Concurrency:     defaultConcurrency,
+		Location:        time.Local,
+		ShutdownTimeout: defaultShutdownTime,
+		TaskTimeout:     defaultTaskTimeout,
 	}
 }
 
@@ -77,16 +87,14 @@ func (c Config) clone() Config {
 	cloned.Redis = cloneRedisOptions(c.Redis)
 	cloned.Queues = copyQueueWeights(c.Queues)
 	cloned.Middleware = append([]asynq.MiddlewareFunc(nil), c.Middleware...)
+
 	return cloned
 }
 
 func (c Config) validate() error {
-	if strings.TrimSpace(c.Redis.Addr) == "" {
-		return invalidConfigurationError("redis.addr", "must not be empty")
-	}
-
-	if c.Redis.DB < 0 {
-		return invalidConfigurationError("redis.db", "must be >= 0")
+	err := validateRedisOptions(c.Redis)
+	if err != nil {
+		return err
 	}
 
 	if c.Concurrency <= 0 {
@@ -112,6 +120,7 @@ func (c Config) validate() error {
 	if c.GroupGracePeriod < 0 {
 		return invalidConfigurationError("group_grace_period", "must be >= 0")
 	}
+
 	if c.GroupGracePeriod > 0 && c.GroupGracePeriod < time.Second {
 		return invalidConfigurationError("group_grace_period", "must be 0 or >= 1s")
 	}
@@ -128,6 +137,7 @@ func (c Config) validate() error {
 		if strings.TrimSpace(name) == "" {
 			return invalidConfigurationError("queues", "queue name must not be empty")
 		}
+
 		if weight <= 0 {
 			return invalidConfigurationError("queues."+name, "queue weight must be > 0")
 		}
@@ -178,18 +188,44 @@ func copyQueueWeights(src map[string]int) map[string]int {
 	}
 
 	dst := make(map[string]int, len(src))
-	for name, weight := range src {
-		dst[name] = weight
-	}
+	maps.Copy(dst, src)
 
 	return dst
 }
 
-func cloneRedisOptions(opt asynq.RedisClientOpt) asynq.RedisClientOpt {
-	cloned := opt
-	if opt.TLSConfig != nil {
-		cloned.TLSConfig = opt.TLSConfig.Clone()
+func cloneRedisOptions(opt asynq.RedisConnOpt) asynq.RedisConnOpt {
+	switch redisOpt := opt.(type) {
+	case asynq.RedisClientOpt:
+		return cloneRedisClientOptions(redisOpt)
+	case asynq.RedisFailoverClientOpt:
+		return cloneRedisFailoverOptions(redisOpt)
+	case asynq.RedisClusterClientOpt:
+		return cloneRedisClusterOptions(redisOpt)
+	default:
+		return redisOpt
 	}
+}
+
+func cloneRedisClientOptions(opt asynq.RedisClientOpt) asynq.RedisClientOpt {
+	cloned := opt
+	cloned.TLSConfig = cloneTLSConfig(opt.TLSConfig)
+
+	return cloned
+}
+
+func cloneRedisFailoverOptions(opt asynq.RedisFailoverClientOpt) asynq.RedisFailoverClientOpt {
+	cloned := opt
+	cloned.SentinelAddrs = slices.Clone(opt.SentinelAddrs)
+	cloned.TLSConfig = cloneTLSConfig(opt.TLSConfig)
+
+	return cloned
+}
+
+func cloneRedisClusterOptions(opt asynq.RedisClusterClientOpt) asynq.RedisClusterClientOpt {
+	cloned := opt
+	cloned.Addrs = slices.Clone(opt.Addrs)
+	cloned.TLSConfig = cloneTLSConfig(opt.TLSConfig)
+
 	return cloned
 }
 
@@ -197,5 +233,75 @@ func cloneTLSConfig(cfg *tls.Config) *tls.Config {
 	if cfg == nil {
 		return nil
 	}
+
 	return cfg.Clone()
+}
+
+func validateRedisOptions(opt asynq.RedisConnOpt) error {
+	if opt == nil {
+		return invalidConfigurationError("redis", "must not be nil")
+	}
+
+	switch redisOpt := opt.(type) {
+	case asynq.RedisClientOpt:
+		return validateRedisClientOptions(redisOpt)
+	case asynq.RedisFailoverClientOpt:
+		return validateRedisFailoverOptions(redisOpt)
+	case asynq.RedisClusterClientOpt:
+		return validateRedisClusterOptions(redisOpt)
+	default:
+		if reflect.ValueOf(opt).Kind() == reflect.Pointer && reflect.ValueOf(opt).IsNil() {
+			return invalidConfigurationError("redis", "must not be nil")
+		}
+
+		return nil
+	}
+}
+
+func validateRedisClientOptions(opt asynq.RedisClientOpt) error {
+	if strings.TrimSpace(opt.Addr) == "" {
+		return invalidConfigurationError("redis.addr", "must not be empty")
+	}
+
+	if opt.DB < 0 {
+		return invalidConfigurationError("redis.db", "must be >= 0")
+	}
+
+	return nil
+}
+
+func validateRedisFailoverOptions(opt asynq.RedisFailoverClientOpt) error {
+	if strings.TrimSpace(opt.MasterName) == "" {
+		return invalidConfigurationError("redis.master_name", "must not be empty")
+	}
+
+	if len(opt.SentinelAddrs) == 0 {
+		return invalidConfigurationError("redis.sentinel_addrs", "must not be empty")
+	}
+
+	for i, addr := range opt.SentinelAddrs {
+		if strings.TrimSpace(addr) == "" {
+			return invalidConfigurationError(fmt.Sprintf("redis.sentinel_addrs[%d]", i), "must not be empty")
+		}
+	}
+
+	if opt.DB < 0 {
+		return invalidConfigurationError("redis.db", "must be >= 0")
+	}
+
+	return nil
+}
+
+func validateRedisClusterOptions(opt asynq.RedisClusterClientOpt) error {
+	if len(opt.Addrs) == 0 {
+		return invalidConfigurationError("redis.addrs", "must not be empty")
+	}
+
+	for i, addr := range opt.Addrs {
+		if strings.TrimSpace(addr) == "" {
+			return invalidConfigurationError(fmt.Sprintf("redis.addrs[%d]", i), "must not be empty")
+		}
+	}
+
+	return nil
 }

@@ -36,21 +36,26 @@ func (r *stubSchedulerRunner) Register(spec string, task *asynq.Task, opts ...as
 	r.registerCalls.Add(1)
 	r.registeredSpec = spec
 	r.registeredTask = task
+
 	r.registeredOpts = append([]asynq.Option(nil), opts...)
+
 	if r.registerErr != nil {
 		return "", r.registerErr
 	}
+
 	return "entry-1", nil
 }
 
 func (r *stubSchedulerRunner) Unregister(entryID string) error {
 	r.unregisterCalls.Add(1)
 	r.unregisteredID = entryID
+
 	return r.unregisterErr
 }
 
 func (r *stubSchedulerRunner) Start() error {
 	r.startCalls.Add(1)
+
 	if r.started != nil {
 		select {
 		case <-r.started:
@@ -58,14 +63,17 @@ func (r *stubSchedulerRunner) Start() error {
 			close(r.started)
 		}
 	}
+
 	if r.blockStart != nil {
 		<-r.blockStart
 	}
+
 	return r.startErr
 }
 
 func (r *stubSchedulerRunner) Shutdown() {
 	r.shutdownCalls.Add(1)
+
 	if r.shutdownStart != nil {
 		select {
 		case <-r.shutdownStart:
@@ -73,6 +81,7 @@ func (r *stubSchedulerRunner) Shutdown() {
 			close(r.shutdownStart)
 		}
 	}
+
 	if r.blockShutdown != nil {
 		<-r.blockShutdown
 	}
@@ -104,11 +113,35 @@ func TestSchedulerRegisterRejectsEmptySpec(t *testing.T) {
 	}
 }
 
+func TestNewSchedulerUsesConfiguredFactory(t *testing.T) {
+	runner := &stubSchedulerRunner{}
+
+	restore := setSchedulerRunnerFactoryForTest(func(Config) (schedulerRunner, error) {
+		return runner, nil
+	})
+	defer restore()
+
+	scheduler, err := NewScheduler()
+	if err != nil {
+		t.Fatalf("unexpected scheduler error: %v", err)
+	}
+
+	err = scheduler.Shutdown(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected shutdown error: %v", err)
+	}
+
+	if got := runner.shutdownCalls.Load(); got != 1 {
+		t.Fatalf("expected configured factory runner to be shut down once, got %d", got)
+	}
+}
+
 func TestSchedulerRegisterEncodesPayloadAndPassesOptions(t *testing.T) {
 	runner := &stubSchedulerRunner{}
 	scheduler := newTestScheduler(t, runner)
 
 	payload := schedulerTestPayload{Name: "alice"}
+
 	entryID, err := scheduler.Register(
 		context.Background(),
 		"@every 1m",
@@ -141,6 +174,7 @@ func TestSchedulerRegisterEncodesPayloadAndPassesOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
+
 	if string(runner.registeredTask.Payload()) != string(body) {
 		t.Fatalf("expected payload %q, got %q", string(body), string(runner.registeredTask.Payload()))
 	}
@@ -165,6 +199,7 @@ func TestSchedulerRegisterAppliesDefaultTaskTimeout(t *testing.T) {
 	}
 
 	runner := &stubSchedulerRunner{}
+
 	scheduler, err := newScheduler(cfg, func(Config) (schedulerRunner, error) {
 		return runner, nil
 	})
@@ -172,7 +207,13 @@ func TestSchedulerRegisterAppliesDefaultTaskTimeout(t *testing.T) {
 		t.Fatalf("unexpected scheduler error: %v", err)
 	}
 
-	if _, err := scheduler.Register(context.Background(), "@every 1m", "email:welcome", schedulerTestPayload{Name: "bob"}); err != nil {
+	_, err = scheduler.Register(
+		context.Background(),
+		"@every 1m",
+		"email:welcome",
+		schedulerTestPayload{Name: "bob"},
+	)
+	if err != nil {
 		t.Fatalf("unexpected register error: %v", err)
 	}
 
@@ -224,20 +265,37 @@ func TestSchedulerShutdownIsIdempotent(t *testing.T) {
 	runner := &stubSchedulerRunner{}
 	scheduler := newTestScheduler(t, runner)
 
-	if err := scheduler.Start(context.Background()); err != nil {
+	err := scheduler.Start(context.Background())
+	if err != nil {
 		t.Fatalf("unexpected start error: %v", err)
 	}
 
-	if err := scheduler.Shutdown(context.Background()); err != nil {
+	err = scheduler.Shutdown(context.Background())
+	if err != nil {
 		t.Fatalf("unexpected shutdown error: %v", err)
 	}
 
-	if err := scheduler.Shutdown(context.Background()); err != nil {
+	err = scheduler.Shutdown(context.Background())
+	if err != nil {
 		t.Fatalf("unexpected second shutdown error: %v", err)
 	}
 
 	if got := runner.shutdownCalls.Load(); got != 1 {
 		t.Fatalf("expected shutdown to be called once, got %d", got)
+	}
+}
+
+func TestSchedulerShutdownBeforeStartClosesRunner(t *testing.T) {
+	runner := &stubSchedulerRunner{}
+	scheduler := newTestScheduler(t, runner)
+
+	err := scheduler.Shutdown(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected shutdown error: %v", err)
+	}
+
+	if got := runner.shutdownCalls.Load(); got != 1 {
+		t.Fatalf("expected idle shutdown to close runner once, got %d", got)
 	}
 }
 
@@ -249,6 +307,7 @@ func TestSchedulerRunCancelsAndTriggersShutdown(t *testing.T) {
 	defer cancel()
 
 	runErr := make(chan error, 1)
+
 	go func() {
 		runErr <- scheduler.Run(ctx)
 	}()
@@ -256,7 +315,8 @@ func TestSchedulerRunCancelsAndTriggersShutdown(t *testing.T) {
 	<-runner.started
 	cancel()
 
-	if err := <-runErr; err != nil {
+	err := <-runErr
+	if err != nil {
 		t.Fatalf("unexpected run error: %v", err)
 	}
 
@@ -273,6 +333,7 @@ func TestSchedulerShutdownWhileStartInProgressStopsScheduler(t *testing.T) {
 	scheduler := newTestScheduler(t, runner)
 
 	startErr := make(chan error, 1)
+
 	go func() {
 		startErr <- scheduler.Start(context.Background())
 	}()
@@ -280,17 +341,20 @@ func TestSchedulerShutdownWhileStartInProgressStopsScheduler(t *testing.T) {
 	<-runner.started
 
 	shutdownErr := make(chan error, 1)
+
 	go func() {
 		shutdownErr <- scheduler.Shutdown(context.Background())
 	}()
 
 	close(runner.blockStart)
 
-	if err := <-shutdownErr; err != nil {
+	err := <-shutdownErr
+	if err != nil {
 		t.Fatalf("unexpected shutdown error: %v", err)
 	}
 
-	if err := <-startErr; err != nil && !errors.Is(err, ErrSchedulerStopped) {
+	err = <-startErr
+	if err != nil && !errors.Is(err, ErrSchedulerStopped) {
 		t.Fatalf("expected nil or ErrSchedulerStopped, got %v", err)
 	}
 
@@ -307,6 +371,7 @@ func TestSchedulerShutdownRespectsContextWhileStartInProgress(t *testing.T) {
 	scheduler := newTestScheduler(t, runner)
 
 	startErr := make(chan error, 1)
+
 	go func() {
 		startErr <- scheduler.Start(context.Background())
 	}()
@@ -316,13 +381,15 @@ func TestSchedulerShutdownRespectsContextWhileStartInProgress(t *testing.T) {
 	shutdownCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if err := scheduler.Shutdown(shutdownCtx); !errors.Is(err, context.Canceled) {
+	err := scheduler.Shutdown(shutdownCtx)
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation error, got %v", err)
 	}
 
 	close(runner.blockStart)
 
-	if err := <-startErr; !errors.Is(err, ErrSchedulerStopped) {
+	err = <-startErr
+	if !errors.Is(err, ErrSchedulerStopped) {
 		t.Fatalf("expected ErrSchedulerStopped, got %v", err)
 	}
 
@@ -342,6 +409,7 @@ func TestSchedulerRunUsesConfiguredShutdownTimeout(t *testing.T) {
 		blockShutdown: make(chan struct{}),
 		shutdownStart: make(chan struct{}),
 	}
+
 	scheduler, err := newScheduler(cfg, func(Config) (schedulerRunner, error) {
 		return runner, nil
 	})
@@ -353,6 +421,7 @@ func TestSchedulerRunUsesConfiguredShutdownTimeout(t *testing.T) {
 	defer cancel()
 
 	runErr := make(chan error, 1)
+
 	go func() {
 		runErr <- scheduler.Run(ctx)
 	}()
@@ -361,7 +430,8 @@ func TestSchedulerRunUsesConfiguredShutdownTimeout(t *testing.T) {
 	cancel()
 	<-runner.shutdownStart
 
-	if err := <-runErr; !errors.Is(err, context.DeadlineExceeded) {
+	err = <-runErr
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected deadline exceeded from shutdown timeout, got %v", err)
 	}
 
