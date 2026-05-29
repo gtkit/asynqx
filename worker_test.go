@@ -3,6 +3,7 @@ package asynqx
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/gtkit/json"
 	"github.com/hibiken/asynq"
 )
+
+var errWorkerStartFailed = errors.New("worker start failed")
 
 type stubWorkerRunner struct {
 	startCalls    atomic.Int32
@@ -70,6 +73,21 @@ func newTestWorker(t *testing.T, runner *stubWorkerRunner) *Worker {
 	}
 
 	return worker
+}
+
+func waitForWorkerState(t *testing.T, worker *Worker, state int32) {
+	t.Helper()
+
+	deadline := time.After(time.Second)
+
+	for worker.state.Load() != state {
+		select {
+		case <-deadline:
+			t.Fatalf("expected worker state %d, got %d", state, worker.state.Load())
+		default:
+			runtime.Gosched()
+		}
+	}
 }
 
 func TestHandleBeforeStartProcessesDecodedPayload(t *testing.T) {
@@ -284,6 +302,90 @@ func TestShutdownWhileStartInProgressStopsWorker(t *testing.T) {
 
 	if got := runner.shutdownCalls.Load(); got != 1 {
 		t.Fatalf("expected shutdown to be called once after start completed, got %d", got)
+	}
+}
+
+func TestWorkerShutdownWhileStartWaitingForRegistrationsClosesRunner(t *testing.T) {
+	runner := &stubWorkerRunner{}
+	worker := newTestWorker(t, runner)
+
+	if err := worker.beginRegistration(); err != nil {
+		t.Fatalf("unexpected registration error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	startErr := make(chan error, 1)
+
+	go func() {
+		startErr <- worker.Start(ctx)
+	}()
+
+	waitForWorkerState(t, worker, workerStateStarting)
+
+	shutdownErr := make(chan error, 1)
+
+	go func() {
+		shutdownErr <- worker.Shutdown(context.Background())
+	}()
+
+	waitForWorkerState(t, worker, workerStateStopping)
+	cancel()
+	worker.endRegistration()
+
+	err := <-startErr
+	if !errors.Is(err, ErrWorkerStopped) {
+		t.Fatalf("expected ErrWorkerStopped, got %v", err)
+	}
+
+	err = <-shutdownErr
+	if err != nil {
+		t.Fatalf("unexpected shutdown error: %v", err)
+	}
+
+	if got := runner.shutdownCalls.Load(); got != 1 {
+		t.Fatalf("expected shutdown to be called once after start cancellation, got %d", got)
+	}
+}
+
+func TestWorkerShutdownWhileStartReturnsErrorClosesRunner(t *testing.T) {
+	runner := &stubWorkerRunner{
+		startErr:   errWorkerStartFailed,
+		started:    make(chan struct{}),
+		blockStart: make(chan struct{}),
+	}
+	worker := newTestWorker(t, runner)
+
+	startErr := make(chan error, 1)
+
+	go func() {
+		startErr <- worker.Start(context.Background())
+	}()
+
+	<-runner.started
+
+	shutdownErr := make(chan error, 1)
+
+	go func() {
+		shutdownErr <- worker.Shutdown(context.Background())
+	}()
+
+	waitForWorkerState(t, worker, workerStateStopping)
+	close(runner.blockStart)
+
+	err := <-startErr
+	if !errors.Is(err, ErrWorkerStopped) {
+		t.Fatalf("expected ErrWorkerStopped, got %v", err)
+	}
+
+	err = <-shutdownErr
+	if err != nil {
+		t.Fatalf("unexpected shutdown error: %v", err)
+	}
+
+	if got := runner.shutdownCalls.Load(); got != 1 {
+		t.Fatalf("expected shutdown to be called once after start error, got %d", got)
 	}
 }
 

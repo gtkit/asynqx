@@ -32,6 +32,7 @@ type brokerClientRef struct {
 }
 
 // NewBroker 基于共享配置创建任务投递器。
+// 调用成功后，调用方应调用 Close 或 Shutdown 释放底层资源。
 func NewBroker(opts ...BrokerOption) (*Broker, error) {
 	cfg, err := NewConfig(opts...)
 	if err != nil {

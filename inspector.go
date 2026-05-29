@@ -8,6 +8,7 @@ type Inspector = asynq.Inspector
 type inspectorClientFactory func(Config) (*Inspector, error)
 
 // NewInspector 基于共享配置创建 asynq 队列检查器。
+// 调用成功后，调用方应调用 Close 释放底层资源。
 func NewInspector(opts ...ConfigOption) (*Inspector, error) {
 	cfg, err := NewConfig(opts...)
 	if err != nil {

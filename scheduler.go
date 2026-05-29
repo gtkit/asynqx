@@ -39,6 +39,7 @@ type schedulerRunner interface {
 type schedulerRunnerFactory func(Config) (schedulerRunner, error)
 
 // NewScheduler 基于共享配置创建 Scheduler，并初始化底层 asynq 调度器。
+// 调用成功后，即使从未调用 Start，调用方也应调用 Shutdown 释放底层资源。
 func NewScheduler(opts ...SchedulerOption) (*Scheduler, error) {
 	cfg, err := NewConfig(opts...)
 	if err != nil {

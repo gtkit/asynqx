@@ -41,6 +41,7 @@ type workerRunner interface {
 type workerRunnerFactory func(Config) (workerRunner, error)
 
 // NewWorker 基于共享配置创建 Worker，并初始化底层 asynq 执行器。
+// 调用成功后，即使从未调用 Start，调用方也应调用 Shutdown 释放底层资源。
 func NewWorker(opts ...WorkerOption) (*Worker, error) {
 	cfg, err := NewConfig(opts...)
 	if err != nil {
@@ -202,7 +203,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		}
 
 		if w.state.Load() == workerStateStopping {
-			w.markStopped()
+			w.beginStop(false)
 
 			return ErrWorkerStopped
 		}
@@ -213,7 +214,7 @@ func (w *Worker) Start(ctx context.Context) error {
 	err = w.runner.Start(w.mux)
 	if err != nil {
 		if w.state.Load() == workerStateStopping {
-			w.markStopped()
+			w.beginStop(false)
 
 			return ErrWorkerStopped
 		}
