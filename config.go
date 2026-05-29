@@ -20,7 +20,7 @@ const (
 	defaultRedisDB      = 0
 )
 
-// Config 表示 Broker、Worker 和 Scheduler 共享的基础配置。
+// Config 表示 Producer、Worker 和 Scheduler 共享的基础配置。
 // 该配置在构造完成后应视为只读，用于统一创建底层 asynq 组件。
 type Config struct {
 	Redis                    asynq.RedisConnOpt
@@ -139,7 +139,25 @@ func (c Config) validate() error {
 		return invalidConfigurationError("group_max_size", "must be >= 0")
 	}
 
-	for name, weight := range c.Queues {
+	err = validateQueueWeights(c.Queues)
+	if err != nil {
+		return err
+	}
+
+	err = validateMiddleware(c.Middleware)
+	if err != nil {
+		return err
+	}
+
+	if c.Location == nil {
+		return invalidConfigurationError("location", "must not be nil")
+	}
+
+	return nil
+}
+
+func validateQueueWeights(queues map[string]int) error {
+	for name, weight := range queues {
 		if strings.TrimSpace(name) == "" {
 			return invalidConfigurationError("queues", "queue name must not be empty")
 		}
@@ -149,14 +167,14 @@ func (c Config) validate() error {
 		}
 	}
 
-	for i, middleware := range c.Middleware {
+	return nil
+}
+
+func validateMiddleware(middlewares []asynq.MiddlewareFunc) error {
+	for i, middleware := range middlewares {
 		if middleware == nil {
 			return invalidConfigurationError(fmt.Sprintf("middleware[%d]", i), "must not be nil")
 		}
-	}
-
-	if c.Location == nil {
-		return invalidConfigurationError("location", "must not be nil")
 	}
 
 	return nil

@@ -1,11 +1,11 @@
 package asynqx
 
-func setBrokerClientFactoryForTest(factory brokerClientFactory) func() {
-	previous := defaultBrokerClientFactory
-	defaultBrokerClientFactory = factory
+func setProducerClientFactoryForTest(factory producerClientFactory) func() {
+	previous := defaultProducerClientFactory
+	defaultProducerClientFactory = factory
 
 	return func() {
-		defaultBrokerClientFactory = previous
+		defaultProducerClientFactory = previous
 	}
 }
 

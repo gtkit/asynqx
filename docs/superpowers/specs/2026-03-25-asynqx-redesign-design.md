@@ -32,7 +32,7 @@
 
 将当前单体 `Server` 拆分为三个显式角色：
 
-### Broker
+### Producer
 
 负责生产任务，仅暴露任务投递相关能力。
 
@@ -86,7 +86,7 @@
 ### 构造函数
 
 ```go
-func NewBroker(opts ...BrokerOption) (*Broker, error)
+func NewProducer(opts ...ProducerOption) (*Producer, error)
 func NewWorker(opts ...WorkerOption) (*Worker, error)
 func NewScheduler(opts ...SchedulerOption) (*Scheduler, error)
 ```
@@ -116,7 +116,7 @@ func (w *Worker) HandleRaw(taskType string, handler Handler) error
 ### 任务投递
 
 ```go
-func (b *Broker) Enqueue(ctx context.Context, taskType string, payload any, opts ...TaskOption) (*TaskInfo, error)
+func (b *Producer) Enqueue(ctx context.Context, taskType string, payload any, opts ...TaskOption) (*TaskInfo, error)
 ```
 
 支持：
@@ -154,8 +154,8 @@ func (w *Worker) Run(ctx context.Context) error
 func (w *Worker) Start(ctx context.Context) error
 func (w *Worker) Shutdown(ctx context.Context) error
 
-func (b *Broker) Close() error
-func (b *Broker) Shutdown(ctx context.Context) error
+func (b *Producer) Close() error
+func (b *Producer) Shutdown(ctx context.Context) error
 ```
 
 约束：
@@ -172,7 +172,7 @@ func (b *Broker) Shutdown(ctx context.Context) error
 - 显式调用 `Shutdown(ctx)` 时，始终以调用方传入的 `ctx` 作为等待上界。
 - `Run(ctx)` 中的 `ctx` 只负责“开始停机”的触发，不直接复用为关闭等待预算。
 - `Run(ctx)` 进入关闭阶段后，默认等待预算来自 `ShutdownTimeout`。
-- `Broker.Close()` 等价于无超时版本的关闭；若调用方需要控制等待上界，应使用 `Broker.Shutdown(ctx)`。
+- `Producer.Close()` 等价于无超时版本的关闭；若调用方需要控制等待上界，应使用 `Producer.Shutdown(ctx)`。
 - `Worker.Shutdown(ctx)` 和 `Scheduler.Shutdown(ctx)` 若先于底层停止完成而超时，应向调用方返回 `ctx.Err()`。
 - `Scheduler.Shutdown(ctx)` 即使向调用方超时返回，后台停止流程仍可能继续直到活跃操作结束。
 
@@ -182,7 +182,7 @@ func (b *Broker) Shutdown(ctx context.Context) error
 
 按作用域拆分 option，避免混用：
 
-- `BrokerOption`
+- `ProducerOption`
 - `WorkerOption`
 - `SchedulerOption`
 - `TaskOption`
@@ -247,7 +247,7 @@ func (b *Broker) Shutdown(ctx context.Context) error
 ### 具体策略
 
 - 配置对象在构造阶段深拷贝，实例创建后不再暴露可变配置。
-- `Broker`、`Worker`、`Scheduler` 不维护业务态共享 map。
+- `Producer`、`Worker`、`Scheduler` 不维护业务态共享 map。
 - 启停状态通过 `atomic.Bool` 与 `sync.Once` 管理，避免对核心路径加互斥锁。
 - 处理器注册只允许在启动前完成，运行中不支持动态修改，避免读写竞争。
 - 核心任务处理链依赖 `asynq` 原生并发能力，不在应用层增加多余 goroutine 包装。
@@ -367,7 +367,7 @@ README 需要覆盖以下内容：
 - 架构说明
 - 安装方式
 - 快速开始
-- Broker 用法
+- Producer 用法
 - Worker 用法
 - Scheduler 用法
 - Option 配置说明
@@ -382,7 +382,7 @@ README 需要覆盖以下内容：
 
 建议按以下模块重构：
 
-- `broker.go`
+- `producer.go`
 - `worker.go`
 - `scheduler.go`
 - `task.go`

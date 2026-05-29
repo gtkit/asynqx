@@ -48,13 +48,14 @@ func NewWorker(opts ...WorkerOption) (*Worker, error) {
 		return nil, err
 	}
 
-	return NewWorkerFromConfig(cfg)
+	return newWorker(cfg, defaultWorkerRunnerFactory)
 }
 
 // NewWorkerFromConfig 基于已构造的共享配置创建 Worker，并初始化底层 asynq 执行器。
 // 调用成功后，即使从未调用 Start，调用方也应调用 Shutdown 释放底层资源。
 func NewWorkerFromConfig(cfg Config) (*Worker, error) {
 	cfg = cfg.clone()
+
 	err := cfg.validate()
 	if err != nil {
 		return nil, err

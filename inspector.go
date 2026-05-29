@@ -19,13 +19,14 @@ func NewInspector(opts ...ConfigOption) (*Inspector, error) {
 		return nil, err
 	}
 
-	return NewInspectorFromConfig(cfg)
+	return newInspector(cfg, defaultInspectorClientFactory)
 }
 
 // NewInspectorFromConfig 基于已构造的共享配置创建 asynq 队列检查器。
 // 调用成功后，调用方应调用 Close 释放底层资源。
 func NewInspectorFromConfig(cfg Config) (*Inspector, error) {
 	cfg = cfg.clone()
+
 	err := cfg.validate()
 	if err != nil {
 		return nil, err

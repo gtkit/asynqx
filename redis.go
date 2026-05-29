@@ -29,6 +29,7 @@ func pingRedisOnStart(ctx context.Context, client redis.UniversalClient, timeout
 
 	if timeout > 0 {
 		var cancel context.CancelFunc
+
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}

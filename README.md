@@ -2,7 +2,7 @@
 
 `asynqx` 是一个面向生产项目的 `asynq` 封装，围绕三个清晰角色组织能力：
 
-- `Broker`：投递任务
+- `Producer`：投递任务
 - `Worker`：消费任务
 - `Scheduler`：注册周期任务
 - `Inspector`：检查队列状态
@@ -39,7 +39,7 @@ go get github.com/gtkit/asynqx
 
 ## 快速开始
 
-### 1. 创建 Broker
+### 1. 创建 Producer
 
 ```go
 package main
@@ -57,16 +57,16 @@ type EmailPayload struct {
 }
 
 func main() {
-	broker, err := asynqx.NewBroker(
+	producer, err := asynqx.NewProducer(
 		asynqx.WithRedisAddr("127.0.0.1:6379"),
 		asynqx.WithRedisDB(0),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer broker.Close()
+	defer producer.Close()
 
-	_, err = broker.Enqueue(
+	_, err = producer.Enqueue(
 		context.Background(),
 		"email:welcome",
 		EmailPayload{UserID: "u-1001"},
@@ -200,17 +200,17 @@ func main() {
 
 ## 架构说明
 
-### Broker
+### Producer
 
-`Broker` 只负责任务投递。
+`Producer` 只负责任务投递。
 
 公开方法：
 
-- `NewBroker(opts ...BrokerOption) (*Broker, error)`
-- `NewBrokerFromConfig(cfg Config) (*Broker, error)`
-- `(*Broker).Enqueue(ctx, taskType, payload, opts...)`
-- `(*Broker).Close() error`
-- `(*Broker).Shutdown(ctx) error`
+- `NewProducer(opts ...ProducerOption) (*Producer, error)`
+- `NewProducerFromConfig(cfg Config) (*Producer, error)`
+- `(*Producer).Enqueue(ctx, taskType, payload, opts...)`
+- `(*Producer).Close() error`
+- `(*Producer).Shutdown(ctx) error`
 
 语义：
 
@@ -231,7 +231,7 @@ func main() {
 
 语义：
 
-- `Inspector` 使用与 `Broker`、`Worker`、`Scheduler` 相同的 Redis 配置
+- `Inspector` 使用与 `Producer`、`Worker`、`Scheduler` 相同的 Redis 配置
 - 调用方不再使用时应调用 `Close`
 
 ### Worker
@@ -281,7 +281,7 @@ func main() {
 
 ### 共享配置选项
 
-这些选项可同时用于 `NewBroker`、`NewWorker`、`NewScheduler`、`NewInspector`：
+这些选项可同时用于 `NewProducer`、`NewWorker`、`NewScheduler`、`NewInspector`：
 
 - `WithRedis(opt asynq.RedisConnOpt)`
 - `WithRedisClient(opt asynq.RedisClientOpt)`
@@ -301,7 +301,7 @@ func main() {
 - `WithPingOnStart(enabled bool)`
 - `WithPingTimeout(timeout time.Duration)`
 
-需要多个组件复用同一组配置时，可以先构造 `Config`，再传给 `NewBrokerFromConfig`、`NewWorkerFromConfig`、`NewSchedulerFromConfig` 或 `NewInspectorFromConfig`。这些构造器会重新复制并校验配置，调用方后续修改原始变量不会影响已经创建的组件。
+需要多个组件复用同一组配置时，可以先构造 `Config`，再传给 `NewProducerFromConfig`、`NewWorkerFromConfig`、`NewSchedulerFromConfig` 或 `NewInspectorFromConfig`。这些构造器会重新复制并校验配置，调用方后续修改原始变量不会影响已经创建的组件。
 
 ### Redis 部署形态
 
@@ -320,7 +320,7 @@ worker, err := asynqx.NewWorker(
 ```
 
 ```go
-broker, err := asynqx.NewBroker(
+producer, err := asynqx.NewProducer(
 	asynqx.WithRedisCluster(asynq.RedisClusterClientOpt{
 		Addrs:    []string{"10.0.1.1:6379", "10.0.1.2:6379", "10.0.1.3:6379"},
 		Username: "app",
@@ -373,7 +373,7 @@ func (l gtkitLoggerAdapter) Fatal(args ...any) { l.log.Fatal(args...) }
 
 ## 任务选项
 
-任务级配置用于 `Broker.Enqueue` 和 `Scheduler.Register`。
+任务级配置用于 `Producer.Enqueue` 和 `Scheduler.Register`。
 
 - `WithTaskQueue(queue string)`
 - `WithTaskTimeout(timeout time.Duration)`
@@ -393,7 +393,7 @@ func (l gtkitLoggerAdapter) Fatal(args ...any) { l.log.Fatal(args...) }
 示例：
 
 ```go
-_, err := broker.Enqueue(
+_, err := producer.Enqueue(
 	context.Background(),
 	"job:demo",
 	map[string]string{"id": "1"},
@@ -468,9 +468,9 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 
 ## 并发安全说明
 
-- `Broker.Close` 幂等，且关闭后会拒绝新的投递
-- `Broker.Shutdown(ctx)` 可为在途投递等待设置上界
-- `Broker` 在关闭期间会等待已进入底层 client 的投递调用完成，再关闭底层连接
+- `Producer.Close` 幂等，且关闭后会拒绝新的投递
+- `Producer.Shutdown(ctx)` 可为在途投递等待设置上界
+- `Producer` 在关闭期间会等待已进入底层 client 的投递调用完成，再关闭底层连接
 - `Worker` 和 `Scheduler` 使用显式状态机处理 `Start/Shutdown` 竞态
 - 处理器注册只允许在 `Worker` 启动前完成
 - 核心运行路径尽量避免显式锁；仅在底层依赖或测试框架需要时使用最小同步原语
@@ -488,7 +488,7 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 - `WithShutdownTimeout(0)` 表示不额外设置默认关闭超时，内部会使用 `context.Background()`
 - 如果 `Run(ctx)` 因 `ctx` 取消而触发停机且关闭成功，返回值是 `nil`；调用方需要区分退出原因时，应在外层读取传入的 `ctx.Err()`
 
-### Broker
+### Producer
 
 - `Enqueue(ctx, ...)` 的 `ctx` 只控制单次投递请求
 - `Close()` 等价于 `Shutdown(context.Background())`
@@ -517,7 +517,7 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 - 服务主进程优先使用 `Run(signalCtx)`，并配置 `WithShutdownTimeout`
 - `ShutdownTimeout` 应大于业务 handler 的正常耗时上界，否则停机时任务更容易被回推 Redis
 - 如果你的服务框架已经有统一停机预算，直接显式调用 `Shutdown(ctx)`，不要依赖默认预算
-- 对 `Broker` 而言，若停机时不希望无限等待在途投递，应优先调用 `Shutdown(ctx)` 而不是 `Close()`
+- 对 `Producer` 而言，若停机时不希望无限等待在途投递，应优先调用 `Shutdown(ctx)` 而不是 `Close()`
 
 ## 生产环境建议
 
@@ -554,7 +554,7 @@ go test ./... -race
 
 当前版本已经移除旧的单体 `Server` API 和动态 payload 订阅接口，改为：
 
-- `Broker`
+- `Producer`
 - `Worker`
 - `Scheduler`
 - 泛型 `Handle[T]`

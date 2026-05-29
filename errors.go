@@ -11,8 +11,8 @@ var ErrInvalidTaskOption = errors.New("asynqx: invalid task option")
 // ErrInvalidArgument 表示公开方法收到的普通参数不合法。
 var ErrInvalidArgument = errors.New("asynqx: invalid argument")
 
-// ErrClosed 表示 Broker 已关闭，不能再投递任务。
-var ErrClosed = errors.New("asynqx: broker closed")
+// ErrClosed 表示 Producer 已关闭，不能再投递任务。
+var ErrClosed = errors.New("asynqx: producer closed")
 
 // ErrInvalidConfiguration 表示传入的基础配置不合法。
 var ErrInvalidConfiguration = errors.New("asynqx: invalid configuration")

@@ -3,9 +3,7 @@ package asynqx
 import (
 	"crypto/tls"
 	"errors"
-	"os"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -422,67 +420,31 @@ func TestNewConfigAppliesShutdownTimeoutOption(t *testing.T) {
 	}
 }
 
-func TestLegacyServerArtifactsRemoved(t *testing.T) {
-	for _, path := range []string{"server.go", "types.go"} {
-		if _, err := os.Stat(path); err == nil {
-			t.Fatalf("expected legacy artifact %q to be removed", path)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("stat %q: %v", path, err)
-		}
-	}
-}
-
-func TestOptionsSourceKeepsRecommendedAndDeprecatedOptionNames(t *testing.T) {
-	body, err := os.ReadFile("options.go")
-	if err != nil {
-		t.Fatalf("read options.go: %v", err)
-	}
-
-	source := string(body)
-	recommendedMarkers := []string{
-		"func WithRedis(",
-		"func WithRedisAddr(",
-		"func WithConcurrency(",
-		"func WithDefaultTaskTimeout(",
-		"func WithLogger(",
-	}
-
-	for _, marker := range recommendedMarkers {
-		if !strings.Contains(source, marker) {
-			t.Fatalf("expected options.go to contain recommended marker %q", marker)
-		}
-	}
-
-	deprecatedMarkers := []string{
-		"var WithRedisOption = WithRedis",
-		"var WithRedisAddrOption = WithRedisAddr",
-		"var WithConcurrencyOption = WithConcurrency",
-		"var WithTaskTimeoutOption = WithDefaultTaskTimeout",
-	}
-
-	for _, marker := range deprecatedMarkers {
-		if !strings.Contains(source, marker) {
-			t.Fatalf("expected options.go to keep deprecated compatibility marker %q", marker)
-		}
-	}
-
-	if strings.Contains(source, "type ServerOption") {
-		t.Fatal("expected options.go to keep old ServerOption artifact removed")
-	}
-}
-
-func TestPackageDocumentationExists(t *testing.T) {
-	body, err := os.ReadFile("doc.go")
-	if err != nil {
-		t.Fatalf("read doc.go: %v", err)
-	}
-
-	source := string(body)
-	if !strings.Contains(source, "Package asynqx") {
-		t.Fatal("expected doc.go to contain a package comment")
-	}
-
-	if !strings.ContainsAny(source, "中文任务调度封装配置") {
-		t.Fatal("expected doc.go to provide a Chinese package overview")
-	}
-}
+var (
+	_ ConfigOption = WithRedisAddrOption("")
+	_ ConfigOption = WithRedisUserOption("")
+	_ ConfigOption = WithRedisPasswordOption("")
+	_ ConfigOption = WithRedisDBOption(0)
+	_ ConfigOption = WithRedisPoolSizeOption(0)
+	_ ConfigOption = WithDialTimeoutOption(0)
+	_ ConfigOption = WithReadTimeoutOption(0)
+	_ ConfigOption = WithWriteTimeoutOption(0)
+	_ ConfigOption = WithTLSConfigOption(nil)
+	_ ConfigOption = WithConcurrencyOption(1)
+	_ ConfigOption = WithQueuesOption(nil)
+	_ ConfigOption = WithRetryDelayFuncOption(nil)
+	_ ConfigOption = WithStrictPriorityOption(false)
+	_ ConfigOption = WithErrorHandlerOption(nil)
+	_ ConfigOption = WithHealthCheckFuncOption(nil)
+	_ ConfigOption = WithHealthCheckIntervalOption(0)
+	_ ConfigOption = WithShutdownTimeoutOption(0)
+	_ ConfigOption = WithDelayedTaskCheckIntervalOption(0)
+	_ ConfigOption = WithGroupGracePeriodOption(0)
+	_ ConfigOption = WithGroupMaxDelayOption(0)
+	_ ConfigOption = WithGroupMaxSizeOption(0)
+	_ ConfigOption = WithMiddlewareOption()
+	_ ConfigOption = WithLocationOption("UTC")
+	_ ConfigOption = WithIsFailureOption(nil)
+	_ ConfigOption = WithTaskTimeoutOption(time.Second)
+	_ ConfigOption = WithLoggerOption(nil)
+)

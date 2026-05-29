@@ -46,13 +46,14 @@ func NewScheduler(opts ...SchedulerOption) (*Scheduler, error) {
 		return nil, err
 	}
 
-	return NewSchedulerFromConfig(cfg)
+	return newScheduler(cfg, defaultSchedulerRunnerFactory)
 }
 
 // NewSchedulerFromConfig 基于已构造的共享配置创建 Scheduler，并初始化底层 asynq 调度器。
 // 调用成功后，即使从未调用 Start，调用方也应调用 Shutdown 释放底层资源。
 func NewSchedulerFromConfig(cfg Config) (*Scheduler, error) {
 	cfg = cfg.clone()
+
 	err := cfg.validate()
 	if err != nil {
 		return nil, err

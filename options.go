@@ -11,8 +11,8 @@ import (
 // ConfigOption 表示作用于共享基础配置的选项。
 type ConfigOption func(*Config) error
 
-// BrokerOption 表示 Broker 使用的配置选项。
-type BrokerOption = ConfigOption
+// ProducerOption 表示 Producer 使用的配置选项。
+type ProducerOption = ConfigOption
 
 // WorkerOption 表示 Worker 使用的配置选项。
 type WorkerOption = ConfigOption
@@ -372,11 +372,6 @@ func WithPingTimeout(timeout time.Duration) ConfigOption {
 	}
 }
 
-// WithRedisOption 已弃用：请改用 WithRedis。
-//
-// Deprecated: 请改用 WithRedis。
-var WithRedisOption = WithRedis
-
 // WithRedisAddrOption 已弃用：请改用 WithRedisAddr。
 //
 // Deprecated: 请改用 WithRedisAddr。
@@ -421,21 +416,6 @@ var WithWriteTimeoutOption = WithWriteTimeout
 //
 // Deprecated: 请改用 WithTLSConfig。
 var WithTLSConfigOption = WithTLSConfig
-
-// WithRedisClientOption 已弃用：请改用 WithRedisClient 或 WithRedis。
-//
-// Deprecated: 请改用 WithRedisClient 或 WithRedis。
-var WithRedisClientOption = WithRedisClient
-
-// WithRedisFailoverOption 已弃用：请改用 WithRedisFailover 或 WithRedis。
-//
-// Deprecated: 请改用 WithRedisFailover 或 WithRedis。
-var WithRedisFailoverOption = WithRedisFailover
-
-// WithRedisClusterOption 已弃用：请改用 WithRedisCluster 或 WithRedis。
-//
-// Deprecated: 请改用 WithRedisCluster 或 WithRedis。
-var WithRedisClusterOption = WithRedisCluster
 
 // WithConcurrencyOption 已弃用：请改用 WithConcurrency。
 //
@@ -521,16 +501,6 @@ var WithTaskTimeoutOption = WithDefaultTaskTimeout
 //
 // Deprecated: 请改用 WithLogger。
 var WithLoggerOption = WithLogger
-
-// WithPingOnStartOption 已弃用：请改用 WithPingOnStart。
-//
-// Deprecated: 请改用 WithPingOnStart。
-var WithPingOnStartOption = WithPingOnStart
-
-// WithPingTimeoutOption 已弃用：请改用 WithPingTimeout。
-//
-// Deprecated: 请改用 WithPingTimeout。
-var WithPingTimeoutOption = WithPingTimeout
 
 func redisClientOptions(cfg *Config) (asynq.RedisClientOpt, error) {
 	opt, ok := cfg.Redis.(asynq.RedisClientOpt)

@@ -11,15 +11,15 @@ type exampleEmailPayload struct {
 	UserID string `json:"user_id"`
 }
 
-func ExampleNewBroker() {
-	broker, err := asynqx.NewBroker(asynqx.WithRedisAddr("127.0.0.1:6379"))
+func ExampleNewProducer() {
+	producer, err := asynqx.NewProducer(asynqx.WithRedisAddr("127.0.0.1:6379"))
 	if err != nil {
-		fmt.Println("new broker:", err)
+		fmt.Println("new producer:", err)
 
 		return
 	}
 
-	_, err = broker.Enqueue(
+	_, err = producer.Enqueue(
 		context.Background(),
 		"email:welcome",
 		exampleEmailPayload{UserID: "u-1001"},
@@ -29,8 +29,8 @@ func ExampleNewBroker() {
 		fmt.Println("enqueue:", err)
 	}
 
-	if err = broker.Close(); err != nil {
-		fmt.Println("close broker:", err)
+	if err = producer.Close(); err != nil {
+		fmt.Println("close producer:", err)
 	}
 }
 
