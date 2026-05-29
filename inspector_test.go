@@ -63,3 +63,36 @@ func TestNewInspectorUsesConfiguredFactory(t *testing.T) {
 		t.Fatal("expected inspector returned from configured factory")
 	}
 }
+
+func TestNewInspectorFromConfigUsesConfig(t *testing.T) {
+	cfg, err := NewConfig(WithRedisDB(3))
+	if err != nil {
+		t.Fatalf("unexpected config error: %v", err)
+	}
+
+	expected := asynq.NewInspector(cfg.Redis)
+	defer expected.Close()
+
+	restore := setInspectorClientFactoryForTest(func(got Config) (*Inspector, error) {
+		clientOpt, ok := got.Redis.(asynq.RedisClientOpt)
+		if !ok {
+			t.Fatalf("expected redis client option, got %T", got.Redis)
+		}
+
+		if clientOpt.DB != 3 {
+			t.Fatalf("expected redis db 3, got %d", clientOpt.DB)
+		}
+
+		return expected, nil
+	})
+	defer restore()
+
+	inspector, err := NewInspectorFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("unexpected inspector error: %v", err)
+	}
+
+	if inspector != expected {
+		t.Fatal("expected inspector returned from configured factory")
+	}
+}

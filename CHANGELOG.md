@@ -11,9 +11,15 @@
 
 - 新增无 `Option` 后缀的共享配置选项，旧 `WithXxxOption` 名称保留为弃用兼容别名。
 - 新增 `WithPingOnStart`，用于在组件创建阶段可选执行 Redis `PING` 探活。
+- 新增 `WithPingTimeout`，用于限制 Redis 启动探活等待时间。
+- 新增 `NewBrokerFromConfig`、`NewWorkerFromConfig`、`NewSchedulerFromConfig`、`NewInspectorFromConfig`，便于多个组件复用同一份 `Config`。
 - 新增 `NewInspector`，直接返回底层 `asynq.Inspector`，用于队列状态检查。
 - 新增 GoDoc 示例，覆盖 `NewBroker`、`Handle` 和 `Scheduler.Register`。
 - README 增加 Redis Sentinel、Redis Cluster 和 gtkit/logger 适配器示例。
+
+### Changed
+
+- `WithDefaultTaskTimeout(0)` 现在表示不注入默认任务超时。
 
 ### Fixed
 

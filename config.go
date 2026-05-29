@@ -39,6 +39,7 @@ type Config struct {
 	Location                 *time.Location
 	Logger                   Logger
 	PingOnStart              bool
+	PingTimeout              time.Duration
 	ShutdownTimeout          time.Duration
 	TaskTimeout              time.Duration
 	Middleware               []asynq.MiddlewareFunc
@@ -106,12 +107,16 @@ func (c Config) validate() error {
 		return invalidConfigurationError("shutdown_timeout", "must be >= 0")
 	}
 
-	if c.TaskTimeout <= 0 {
-		return invalidConfigurationError("task_timeout", "must be > 0")
+	if c.TaskTimeout < 0 {
+		return invalidConfigurationError("task_timeout", "must be >= 0")
 	}
 
 	if c.HealthCheckInterval < 0 {
 		return invalidConfigurationError("health_check_interval", "must be >= 0")
+	}
+
+	if c.PingTimeout < 0 {
+		return invalidConfigurationError("ping_timeout", "must be >= 0")
 	}
 
 	if c.DelayedTaskCheckInterval < 0 {

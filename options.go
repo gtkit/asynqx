@@ -362,6 +362,16 @@ func WithPingOnStart(enabled bool) ConfigOption {
 	}
 }
 
+// WithPingTimeout 设置启动探活的等待超时时间。
+// 传入 0 表示不额外设置超时，直接使用 Redis 客户端自身的超时配置。
+func WithPingTimeout(timeout time.Duration) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.PingTimeout = timeout
+
+		return nil
+	}
+}
+
 // WithRedisOption 已弃用：请改用 WithRedis。
 //
 // Deprecated: 请改用 WithRedis。
@@ -516,6 +526,11 @@ var WithLoggerOption = WithLogger
 //
 // Deprecated: 请改用 WithPingOnStart。
 var WithPingOnStartOption = WithPingOnStart
+
+// WithPingTimeoutOption 已弃用：请改用 WithPingTimeout。
+//
+// Deprecated: 请改用 WithPingTimeout。
+var WithPingTimeoutOption = WithPingTimeout
 
 func redisClientOptions(cfg *Config) (asynq.RedisClientOpt, error) {
 	opt, ok := cfg.Redis.(asynq.RedisClientOpt)

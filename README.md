@@ -207,6 +207,7 @@ func main() {
 公开方法：
 
 - `NewBroker(opts ...BrokerOption) (*Broker, error)`
+- `NewBrokerFromConfig(cfg Config) (*Broker, error)`
 - `(*Broker).Enqueue(ctx, taskType, payload, opts...)`
 - `(*Broker).Close() error`
 - `(*Broker).Shutdown(ctx) error`
@@ -225,6 +226,7 @@ func main() {
 公开方法：
 
 - `NewInspector(opts ...ConfigOption) (*Inspector, error)`
+- `NewInspectorFromConfig(cfg Config) (*Inspector, error)`
 - `(*Inspector).Close() error`
 
 语义：
@@ -239,6 +241,7 @@ func main() {
 公开方法：
 
 - `NewWorker(opts ...WorkerOption) (*Worker, error)`
+- `NewWorkerFromConfig(cfg Config) (*Worker, error)`
 - `(*Worker).HandleRaw(taskType, handler) error`
 - `Handle[T](worker, taskType, handler) error`
 - `(*Worker).Start(ctx) error`
@@ -260,6 +263,7 @@ func main() {
 公开方法：
 
 - `NewScheduler(opts ...SchedulerOption) (*Scheduler, error)`
+- `NewSchedulerFromConfig(cfg Config) (*Scheduler, error)`
 - `(*Scheduler).Register(ctx, spec, taskType, payload, opts...) (string, error)`
 - `(*Scheduler).Unregister(ctx, entryID) error`
 - `(*Scheduler).Start(ctx) error`
@@ -295,6 +299,9 @@ func main() {
 - `WithLocation(name string)`
 - `WithLogger(log Logger)`
 - `WithPingOnStart(enabled bool)`
+- `WithPingTimeout(timeout time.Duration)`
+
+需要多个组件复用同一组配置时，可以先构造 `Config`，再传给 `NewBrokerFromConfig`、`NewWorkerFromConfig`、`NewSchedulerFromConfig` 或 `NewInspectorFromConfig`。这些构造器会重新复制并校验配置，调用方后续修改原始变量不会影响已经创建的组件。
 
 ### Redis 部署形态
 
@@ -324,7 +331,7 @@ broker, err := asynqx.NewBroker(
 
 `WithRedisAddr`、`WithRedisUser`、`WithRedisPassword` 等便捷选项只适用于单机 Redis。已经使用 Sentinel 或 Cluster 配置后，不应再叠加这些单机字段选项。
 
-默认情况下 Redis 连接保持 asynq/go-redis 的懒连接语义。需要启动时尽早暴露 Redis 不可达问题时，可以显式配置 `WithPingOnStart(true)`；该选项会在组件创建阶段执行一次 `PING`，失败时直接返回错误。
+默认情况下 Redis 连接保持 asynq/go-redis 的懒连接语义。需要启动时尽早暴露 Redis 不可达问题时，可以显式配置 `WithPingOnStart(true)`；该选项会在组件创建阶段执行一次 `PING`，失败时直接返回错误。`WithPingTimeout` 可限制这次探活的等待时间，传入 `0` 表示只使用 Redis 客户端自身的超时配置。
 
 ### gtkit/logger 接入示例
 
@@ -360,6 +367,9 @@ func (l gtkitLoggerAdapter) Fatal(args ...any) { l.log.Fatal(args...) }
 - `WithIsFailure(fn func(error) bool)`
 - `WithDefaultTaskTimeout(timeout time.Duration)`
 - `WithPingOnStart(enabled bool)`
+- `WithPingTimeout(timeout time.Duration)`
+
+`WithDefaultTaskTimeout(0)` 表示不注入默认任务超时；此时只有显式传入 `WithTaskTimeout` 的任务才会携带 timeout 选项。
 
 ## 任务选项
 

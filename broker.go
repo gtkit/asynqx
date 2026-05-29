@@ -39,12 +39,24 @@ func NewBroker(opts ...BrokerOption) (*Broker, error) {
 		return nil, err
 	}
 
+	return NewBrokerFromConfig(cfg)
+}
+
+// NewBrokerFromConfig 基于已构造的共享配置创建任务投递器。
+// 调用成功后，调用方应调用 Close 或 Shutdown 释放底层资源。
+func NewBrokerFromConfig(cfg Config) (*Broker, error) {
+	cfg = cfg.clone()
+	err := cfg.validate()
+	if err != nil {
+		return nil, err
+	}
+
 	return newBroker(cfg, defaultBrokerClientFactory)
 }
 
 var defaultBrokerClientFactory brokerClientFactory = func(cfg Config) (brokerClient, error) {
 	if cfg.PingOnStart {
-		err := pingRedisOptionOnStart(context.Background(), cfg.Redis)
+		err := pingRedisOptionOnStart(context.Background(), cfg.Redis, cfg.PingTimeout)
 		if err != nil {
 			return nil, err
 		}

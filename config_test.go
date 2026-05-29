@@ -380,6 +380,25 @@ func TestNewConfigAppliesPingOnStartOption(t *testing.T) {
 	}
 }
 
+func TestNewConfigAppliesPingTimeoutOption(t *testing.T) {
+	cfg, err := NewConfig(WithPingTimeout(3 * time.Second))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.PingTimeout != 3*time.Second {
+		t.Fatalf("expected ping timeout 3s, got %v", cfg.PingTimeout)
+	}
+}
+
+func TestNewConfigRejectsNegativePingTimeout(t *testing.T) {
+	if _, err := NewConfig(WithPingTimeout(-time.Second)); err == nil {
+		t.Fatal("expected error for negative ping timeout")
+	} else if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
+	}
+}
+
 func TestNewConfigRejectsTooSmallGroupGracePeriod(t *testing.T) {
 	if _, err := NewConfig(WithGroupGracePeriod(500 * time.Millisecond)); err == nil {
 		t.Fatal("expected error for too small group grace period")

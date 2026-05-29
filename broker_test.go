@@ -111,6 +111,33 @@ func TestNewBrokerUsesConfiguredFactory(t *testing.T) {
 	}
 }
 
+func TestNewBrokerFromConfigUsesConfig(t *testing.T) {
+	cfg, err := NewConfig(WithDefaultTaskTimeout(45 * time.Second))
+	if err != nil {
+		t.Fatalf("unexpected config error: %v", err)
+	}
+
+	client := &stubBrokerClient{}
+
+	restore := setBrokerClientFactoryForTest(func(got Config) (brokerClient, error) {
+		if got.TaskTimeout != 45*time.Second {
+			t.Fatalf("expected task timeout 45s, got %v", got.TaskTimeout)
+		}
+
+		return client, nil
+	})
+	defer restore()
+
+	broker, err := NewBrokerFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("unexpected broker error: %v", err)
+	}
+
+	if err = broker.Close(); err != nil {
+		t.Fatalf("unexpected close error: %v", err)
+	}
+}
+
 func TestBrokerEnqueueAfterCloseReturnsErrClosed(t *testing.T) {
 	cfg, err := NewConfig()
 	if err != nil {
@@ -225,6 +252,31 @@ func TestBrokerEnqueueAppliesDefaultTaskTimeout(t *testing.T) {
 	}
 
 	assertAsynqOption(t, client.lastOpts[0], asynq.TimeoutOpt, 45*time.Second)
+}
+
+func TestBrokerEnqueueAllowsDisablingDefaultTaskTimeout(t *testing.T) {
+	cfg, err := NewConfig(WithDefaultTaskTimeout(0))
+	if err != nil {
+		t.Fatalf("unexpected config error: %v", err)
+	}
+
+	client := &stubBrokerClient{}
+
+	broker, err := newBroker(cfg, func(Config) (brokerClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected broker error: %v", err)
+	}
+
+	_, err = broker.Enqueue(context.Background(), "email:send", map[string]string{"id": "7"})
+	if err != nil {
+		t.Fatalf("unexpected enqueue error: %v", err)
+	}
+
+	if len(client.lastOpts) != 0 {
+		t.Fatalf("expected no default task option, got %d", len(client.lastOpts))
+	}
 }
 
 func TestBrokerCloseWaitsForInflightEnqueue(t *testing.T) {

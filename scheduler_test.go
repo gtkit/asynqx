@@ -136,6 +136,33 @@ func TestNewSchedulerUsesConfiguredFactory(t *testing.T) {
 	}
 }
 
+func TestNewSchedulerFromConfigUsesConfig(t *testing.T) {
+	cfg, err := NewConfig(WithLocation("Asia/Shanghai"))
+	if err != nil {
+		t.Fatalf("unexpected config error: %v", err)
+	}
+
+	runner := &stubSchedulerRunner{}
+
+	restore := setSchedulerRunnerFactoryForTest(func(got Config) (schedulerRunner, error) {
+		if got.Location.String() != "Asia/Shanghai" {
+			t.Fatalf("expected location Asia/Shanghai, got %v", got.Location)
+		}
+
+		return runner, nil
+	})
+	defer restore()
+
+	scheduler, err := NewSchedulerFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("unexpected scheduler error: %v", err)
+	}
+
+	if err = scheduler.Shutdown(context.Background()); err != nil {
+		t.Fatalf("unexpected shutdown error: %v", err)
+	}
+}
+
 func TestSchedulerRegisterEncodesPayloadAndPassesOptions(t *testing.T) {
 	runner := &stubSchedulerRunner{}
 	scheduler := newTestScheduler(t, runner)

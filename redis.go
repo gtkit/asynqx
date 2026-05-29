@@ -3,6 +3,7 @@ package asynqx
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
@@ -21,9 +22,15 @@ func newRedisUniversalClient(opt asynq.RedisConnOpt) (redis.UniversalClient, err
 	return client, nil
 }
 
-func pingRedisOnStart(ctx context.Context, client redis.UniversalClient) error {
+func pingRedisOnStart(ctx context.Context, client redis.UniversalClient, timeout time.Duration) error {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 
 	err := client.Ping(ctx).Err()
@@ -34,12 +41,12 @@ func pingRedisOnStart(ctx context.Context, client redis.UniversalClient) error {
 	return nil
 }
 
-func pingRedisOptionOnStart(ctx context.Context, opt asynq.RedisConnOpt) error {
+func pingRedisOptionOnStart(ctx context.Context, opt asynq.RedisConnOpt, timeout time.Duration) error {
 	client, err := newRedisUniversalClient(opt)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 
-	return pingRedisOnStart(ctx, client)
+	return pingRedisOnStart(ctx, client, timeout)
 }

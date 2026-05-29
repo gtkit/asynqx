@@ -19,6 +19,18 @@ func NewInspector(opts ...ConfigOption) (*Inspector, error) {
 		return nil, err
 	}
 
+	return NewInspectorFromConfig(cfg)
+}
+
+// NewInspectorFromConfig 基于已构造的共享配置创建 asynq 队列检查器。
+// 调用成功后，调用方应调用 Close 释放底层资源。
+func NewInspectorFromConfig(cfg Config) (*Inspector, error) {
+	cfg = cfg.clone()
+	err := cfg.validate()
+	if err != nil {
+		return nil, err
+	}
+
 	return newInspector(cfg, defaultInspectorClientFactory)
 }
 
@@ -41,7 +53,7 @@ func newInspector(cfg Config, factory inspectorClientFactory) (*Inspector, error
 
 var defaultInspectorClientFactory inspectorClientFactory = func(cfg Config) (*Inspector, error) {
 	if cfg.PingOnStart {
-		err := pingRedisOptionOnStart(context.Background(), cfg.Redis)
+		err := pingRedisOptionOnStart(context.Background(), cfg.Redis, cfg.PingTimeout)
 		if err != nil {
 			return nil, err
 		}

@@ -151,6 +151,33 @@ func TestNewWorkerUsesConfiguredFactory(t *testing.T) {
 	}
 }
 
+func TestNewWorkerFromConfigUsesConfig(t *testing.T) {
+	cfg, err := NewConfig(WithConcurrency(32))
+	if err != nil {
+		t.Fatalf("unexpected config error: %v", err)
+	}
+
+	runner := &stubWorkerRunner{}
+
+	restore := setWorkerRunnerFactoryForTest(func(got Config) (workerRunner, error) {
+		if got.Concurrency != 32 {
+			t.Fatalf("expected concurrency 32, got %d", got.Concurrency)
+		}
+
+		return runner, nil
+	})
+	defer restore()
+
+	worker, err := NewWorkerFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("unexpected worker error: %v", err)
+	}
+
+	if err = worker.Shutdown(context.Background()); err != nil {
+		t.Fatalf("unexpected shutdown error: %v", err)
+	}
+}
+
 func TestHandleReturnsSkipRetryOnInvalidPayload(t *testing.T) {
 	worker := newTestWorker(t, &stubWorkerRunner{})
 
