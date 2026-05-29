@@ -226,6 +226,7 @@ func (b *Producer) Shutdown(ctx context.Context) error
 ### Task 配置
 
 - `WithTaskQueue`
+- `WithTaskGroup`
 - `WithTaskTimeout`
 - `WithTaskDeadline`
 - `WithTaskDelay`

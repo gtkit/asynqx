@@ -20,6 +20,7 @@ func TestBuildTaskOptionsBuildsAsynqOptions(t *testing.T) {
 
 	opts, err := buildTaskOptions(
 		WithTaskQueue("critical"),
+		WithTaskGroup("user-42"),
 		WithTaskTimeout(2*time.Minute),
 		WithTaskDeadline(now.Add(5*time.Minute)),
 		WithTaskDelay(30*time.Second),
@@ -34,6 +35,7 @@ func TestBuildTaskOptionsBuildsAsynqOptions(t *testing.T) {
 
 	assertOptionSet(t, opts, map[asynq.OptionType]any{
 		asynq.QueueOpt:     "critical",
+		asynq.GroupOpt:     "user-42",
 		asynq.TimeoutOpt:   2 * time.Minute,
 		asynq.DeadlineOpt:  now.Add(5 * time.Minute),
 		asynq.ProcessInOpt: 30 * time.Second,
@@ -56,6 +58,10 @@ func TestBuildTaskOptionsRejectsInvalidValues(t *testing.T) {
 		{
 			name: "negative timeout",
 			opts: []TaskOption{WithTaskTimeout(-time.Second)},
+		},
+		{
+			name: "empty group",
+			opts: []TaskOption{WithTaskGroup(" ")},
 		},
 		{
 			name: "zero deadline",
@@ -129,6 +135,18 @@ func TestBuildTaskOptionsDelayOverridesProcessAt(t *testing.T) {
 	}
 
 	assertAsynqOption(t, opts[0], asynq.ProcessInOpt, time.Minute)
+}
+
+func TestApplyDefaultTaskTimeoutSkipsExistingDeadline(t *testing.T) {
+	deadline := time.Date(2026, 3, 25, 11, 0, 0, 0, time.UTC)
+
+	opts := applyDefaultTaskTimeout([]asynq.Option{asynq.Deadline(deadline)}, defaultTaskTimeout)
+
+	if len(opts) != 1 {
+		t.Fatalf("expected deadline to prevent default timeout injection, got %d options", len(opts))
+	}
+
+	assertAsynqOption(t, opts[0], asynq.DeadlineOpt, deadline)
 }
 
 func assertAsynqOption(t *testing.T, opt asynq.Option, wantType asynq.OptionType, wantValue any) {

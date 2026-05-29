@@ -16,6 +16,8 @@ type TaskOption func(*taskOptions) error
 type taskOptions struct {
 	queue        string
 	hasQueue     bool
+	group        string
+	hasGroup     bool
 	timeout      time.Duration
 	hasTimeout   bool
 	deadline     time.Time
@@ -43,6 +45,20 @@ func WithTaskQueue(queue string) TaskOption {
 
 		opts.queue = queue
 		opts.hasQueue = true
+
+		return nil
+	}
+}
+
+// WithTaskGroup 设置任务聚合分组名。
+func WithTaskGroup(group string) TaskOption {
+	return func(opts *taskOptions) error {
+		if strings.TrimSpace(group) == "" {
+			return invalidTaskOptionError("group", "must not be empty")
+		}
+
+		opts.group = group
+		opts.hasGroup = true
 
 		return nil
 	}
@@ -189,6 +205,10 @@ func buildTaskOptions(opts ...TaskOption) ([]asynq.Option, error) {
 		built = append(built, asynq.Queue(resolved.queue))
 	}
 
+	if resolved.hasGroup {
+		built = append(built, asynq.Group(resolved.group))
+	}
+
 	if resolved.hasTimeout {
 		built = append(built, asynq.Timeout(resolved.timeout))
 	}
@@ -228,7 +248,7 @@ func applyDefaultTaskTimeout(opts []asynq.Option, timeout time.Duration) []asynq
 	}
 
 	for _, opt := range opts {
-		if opt.Type() == asynq.TimeoutOpt {
+		if opt.Type() == asynq.TimeoutOpt || opt.Type() == asynq.DeadlineOpt {
 			return opts
 		}
 	}

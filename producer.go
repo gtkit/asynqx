@@ -90,7 +90,7 @@ func newProducer(cfg Config, factory producerClientFactory) (*Producer, error) {
 	return producer, nil
 }
 
-// Enqueue 编码 payload 并投递任务。
+// Enqueue 将 payload 序列化为 JSON 后投递任务。
 func (b *Producer) Enqueue(
 	ctx context.Context,
 	taskType string,

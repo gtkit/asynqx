@@ -369,13 +369,14 @@ func (l gtkitLoggerAdapter) Fatal(args ...any) { l.log.Fatal(args...) }
 - `WithPingOnStart(enabled bool)`
 - `WithPingTimeout(timeout time.Duration)`
 
-`WithDefaultTaskTimeout(0)` 表示不注入默认任务超时；此时只有显式传入 `WithTaskTimeout` 的任务才会携带 timeout 选项。
+`WithDefaultTaskTimeout(0)` 表示不注入默认任务超时；此时只有显式传入 `WithTaskTimeout` 的任务才会携带 timeout 选项。任务已经显式配置 `WithTaskTimeout` 或 `WithTaskDeadline` 时，不会再注入默认任务超时。
 
 ## 任务选项
 
 任务级配置用于 `Producer.Enqueue` 和 `Scheduler.Register`。
 
 - `WithTaskQueue(queue string)`
+- `WithTaskGroup(group string)`
 - `WithTaskTimeout(timeout time.Duration)`
 - `WithTaskDeadline(deadline time.Time)`
 - `WithTaskDelay(delay time.Duration)`
@@ -384,6 +385,8 @@ func (l gtkitLoggerAdapter) Fatal(args ...any) { l.log.Fatal(args...) }
 - `WithTaskUnique(ttl time.Duration)`
 - `WithTaskRetention(retention time.Duration)`
 - `WithTaskID(taskID string)`
+
+`Producer.Enqueue` 和 `Scheduler.Register` 会将 payload 序列化为 JSON 后写入 asynq 任务；传入 `[]byte` 也会按 JSON 规则编码，而不是作为原始字节透传。
 
 ### 调度选项覆盖规则
 
