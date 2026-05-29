@@ -2,8 +2,7 @@ package asynqx_test
 
 import (
 	"context"
-	"log"
-	"time"
+	"fmt"
 
 	"github.com/gtkit/asynqx"
 )
@@ -15,37 +14,43 @@ type exampleEmailPayload struct {
 func ExampleNewBroker() {
 	broker, err := asynqx.NewBroker(asynqx.WithRedisAddr("127.0.0.1:6379"))
 	if err != nil {
-		log.Fatal(err)
-	}
-	defer broker.Close()
+		fmt.Println("new broker:", err)
 
-	// _, err = broker.Enqueue(
-	// 	context.Background(),
-	// 	"email:welcome",
-	// 	exampleEmailPayload{UserID: "u-1001"},
-	// 	asynqx.WithTaskQueue("critical"),
-	// 	asynqx.WithTaskTimeout(30*time.Second),
-	// )
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+		return
+	}
+
+	_, err = broker.Enqueue(
+		context.Background(),
+		"email:welcome",
+		exampleEmailPayload{UserID: "u-1001"},
+		asynqx.WithTaskQueue("critical"),
+	)
+	if err != nil {
+		fmt.Println("enqueue:", err)
+	}
+
+	if err = broker.Close(); err != nil {
+		fmt.Println("close broker:", err)
+	}
 }
 
 func ExampleHandle() {
 	worker, err := asynqx.NewWorker(asynqx.WithRedisAddr("127.0.0.1:6379"))
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println("new worker:", err)
+
+		return
 	}
-	defer worker.Shutdown(context.Background())
 
-	err = asynqx.Handle(worker, "email:welcome", func(ctx context.Context, payload exampleEmailPayload) error {
-		_ = ctx
-		_ = payload
-
+	err = asynqx.Handle(worker, "email:welcome", func(_ context.Context, _ exampleEmailPayload) error {
 		return nil
 	})
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println("handle:", err)
+	}
+
+	if err = worker.Shutdown(context.Background()); err != nil {
+		fmt.Println("shutdown worker:", err)
 	}
 }
 
@@ -55,9 +60,10 @@ func ExampleScheduler_Register() {
 		asynqx.WithLocation("Asia/Shanghai"),
 	)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println("new scheduler:", err)
+
+		return
 	}
-	defer scheduler.Shutdown(context.Background())
 
 	_, err = scheduler.Register(
 		context.Background(),
@@ -67,7 +73,10 @@ func ExampleScheduler_Register() {
 		asynqx.WithTaskQueue("default"),
 	)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println("register:", err)
 	}
-	_ = time.Second
+
+	if err = scheduler.Shutdown(context.Background()); err != nil {
+		fmt.Println("shutdown scheduler:", err)
+	}
 }

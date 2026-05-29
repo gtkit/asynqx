@@ -1,6 +1,7 @@
 package asynqx
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -26,7 +27,7 @@ func TestNewRedisUniversalClientRejectsUnsupportedClient(t *testing.T) {
 }
 
 func TestPingRedisOptionOnStartRejectsUnsupportedClient(t *testing.T) {
-	err := pingRedisOptionOnStart(nil, invalidRedisConnOpt{})
+	err := pingRedisOptionOnStart(context.TODO(), invalidRedisConnOpt{})
 	if !errors.Is(err, ErrInvalidConfiguration) {
 		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
 	}
