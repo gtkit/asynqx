@@ -35,9 +35,11 @@ type Config struct {
 	GroupGracePeriod         time.Duration
 	GroupMaxDelay            time.Duration
 	GroupMaxSize             int
+	GroupAggregator          asynq.GroupAggregator
 	IsFailure                func(error) bool
 	Location                 *time.Location
 	Logger                   Logger
+	SchedulerPostEnqueueFunc func(info *asynq.TaskInfo, err error)
 	PingOnStart              bool
 	PingTimeout              time.Duration
 	ShutdownTimeout          time.Duration
@@ -180,6 +182,25 @@ func validateMiddleware(middlewares []asynq.MiddlewareFunc) error {
 	return nil
 }
 
+// isNilInterface 判断接口值是否为 nil，包含"带类型的 nil"（如 (asynq.GroupAggregatorFunc)(nil)）。
+// 普通 v == nil 无法识别 typed nil，调用其方法会在运行时 panic。
+func isNilInterface(v any) bool {
+	if v == nil {
+		return true
+	}
+
+	value := reflect.ValueOf(v)
+
+	kind := value.Kind()
+	if kind == reflect.Chan || kind == reflect.Func || kind == reflect.Map ||
+		kind == reflect.Pointer || kind == reflect.Slice || kind == reflect.Interface ||
+		kind == reflect.UnsafePointer {
+		return value.IsNil()
+	}
+
+	return false
+}
+
 func (c Config) asynqConfig() asynq.Config {
 	return asynq.Config{
 		Concurrency:              c.Concurrency,
@@ -194,6 +215,7 @@ func (c Config) asynqConfig() asynq.Config {
 		GroupGracePeriod:         c.GroupGracePeriod,
 		GroupMaxDelay:            c.GroupMaxDelay,
 		GroupMaxSize:             c.GroupMaxSize,
+		GroupAggregator:          c.GroupAggregator,
 		IsFailure:                c.IsFailure,
 		Logger:                   c.Logger,
 	}
@@ -201,8 +223,9 @@ func (c Config) asynqConfig() asynq.Config {
 
 func (c Config) schedulerOptions() *asynq.SchedulerOpts {
 	return &asynq.SchedulerOpts{
-		Location: c.Location,
-		Logger:   c.Logger,
+		Location:        c.Location,
+		Logger:          c.Logger,
+		PostEnqueueFunc: c.SchedulerPostEnqueueFunc,
 	}
 }
 
@@ -221,10 +244,28 @@ func cloneRedisOptions(opt asynq.RedisConnOpt) asynq.RedisConnOpt {
 	switch redisOpt := opt.(type) {
 	case asynq.RedisClientOpt:
 		return cloneRedisClientOptions(redisOpt)
+	case *asynq.RedisClientOpt:
+		if redisOpt == nil {
+			return opt
+		}
+
+		return cloneRedisClientOptions(*redisOpt)
 	case asynq.RedisFailoverClientOpt:
 		return cloneRedisFailoverOptions(redisOpt)
+	case *asynq.RedisFailoverClientOpt:
+		if redisOpt == nil {
+			return opt
+		}
+
+		return cloneRedisFailoverOptions(*redisOpt)
 	case asynq.RedisClusterClientOpt:
 		return cloneRedisClusterOptions(redisOpt)
+	case *asynq.RedisClusterClientOpt:
+		if redisOpt == nil {
+			return opt
+		}
+
+		return cloneRedisClusterOptions(*redisOpt)
 	default:
 		return redisOpt
 	}
@@ -269,10 +310,28 @@ func validateRedisOptions(opt asynq.RedisConnOpt) error {
 	switch redisOpt := opt.(type) {
 	case asynq.RedisClientOpt:
 		return validateRedisClientOptions(redisOpt)
+	case *asynq.RedisClientOpt:
+		if redisOpt == nil {
+			return invalidConfigurationError("redis", "must not be nil")
+		}
+
+		return validateRedisClientOptions(*redisOpt)
 	case asynq.RedisFailoverClientOpt:
 		return validateRedisFailoverOptions(redisOpt)
+	case *asynq.RedisFailoverClientOpt:
+		if redisOpt == nil {
+			return invalidConfigurationError("redis", "must not be nil")
+		}
+
+		return validateRedisFailoverOptions(*redisOpt)
 	case asynq.RedisClusterClientOpt:
 		return validateRedisClusterOptions(redisOpt)
+	case *asynq.RedisClusterClientOpt:
+		if redisOpt == nil {
+			return invalidConfigurationError("redis", "must not be nil")
+		}
+
+		return validateRedisClusterOptions(*redisOpt)
 	default:
 		if reflect.ValueOf(opt).Kind() == reflect.Pointer && reflect.ValueOf(opt).IsNil() {
 			return invalidConfigurationError("redis", "must not be nil")

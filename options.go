@@ -299,6 +299,21 @@ func WithGroupMaxSize(size int) ConfigOption {
 	}
 }
 
+// WithGroupAggregator 设置任务聚合器。
+// 任务聚合（WithTaskGroup 投递的分组任务）必须配置聚合器才会真正生效：
+// 未设置时 asynq 不会启动聚合协程，分组任务将滞留在 group 中不被处理。
+func WithGroupAggregator(aggregator asynq.GroupAggregator) ConfigOption {
+	return func(cfg *Config) error {
+		if isNilInterface(aggregator) {
+			return invalidConfigurationError("group_aggregator", "must not be nil")
+		}
+
+		cfg.GroupAggregator = aggregator
+
+		return nil
+	}
+}
+
 // WithMiddleware 设置共享配置中的中间件。
 func WithMiddleware(middlewares ...asynq.MiddlewareFunc) ConfigOption {
 	return func(cfg *Config) error {
@@ -348,6 +363,17 @@ func WithDefaultTaskTimeout(timeout time.Duration) ConfigOption {
 func WithLogger(log Logger) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.Logger = log
+
+		return nil
+	}
+}
+
+// WithSchedulerPostEnqueueFunc 设置调度器每次投递周期任务后的回调，用于观测投递结果。
+// 仅对 Scheduler 生效；回调在每次投递后触发，err 非 nil 表示该次周期任务投递失败，
+// 可据此对"定时任务未能投递"做告警，避免失败被静默吞掉。回调应快速返回，不要阻塞。
+func WithSchedulerPostEnqueueFunc(fn func(info *asynq.TaskInfo, err error)) ConfigOption {
+	return func(cfg *Config) error {
+		cfg.SchedulerPostEnqueueFunc = fn
 
 		return nil
 	}

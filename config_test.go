@@ -419,3 +419,85 @@ func TestNewConfigAppliesShutdownTimeoutOption(t *testing.T) {
 		t.Fatalf("expected asynq config shutdown timeout 12s, got %v", cfg.asynqConfig().ShutdownTimeout)
 	}
 }
+
+func TestWithGroupAggregatorRejectsNil(t *testing.T) {
+	_, err := NewConfig(WithGroupAggregator(nil))
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration, got %v", err)
+	}
+}
+
+func TestNewConfigAppliesGroupAggregator(t *testing.T) {
+	aggregator := asynq.GroupAggregatorFunc(func(_ string, tasks []*asynq.Task) *asynq.Task {
+		return tasks[0]
+	})
+
+	cfg, err := NewConfig(WithGroupAggregator(aggregator))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.GroupAggregator == nil {
+		t.Fatal("expected group aggregator to be set on config")
+	}
+
+	if cfg.asynqConfig().GroupAggregator == nil {
+		t.Fatal("expected group aggregator to be carried into asynq config")
+	}
+}
+
+func TestWithGroupAggregatorRejectsTypedNil(t *testing.T) {
+	var fn asynq.GroupAggregatorFunc
+
+	_, err := NewConfig(WithGroupAggregator(fn))
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration for typed-nil aggregator, got %v", err)
+	}
+}
+
+func TestWithRedisPointerFormValidatesAndNormalizes(t *testing.T) {
+	if _, err := NewConfig(WithRedis(&asynq.RedisClientOpt{Addr: ""})); !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration for empty addr via pointer, got %v", err)
+	}
+
+	cfg, err := NewConfig(WithRedis(&asynq.RedisClientOpt{
+		Addr:      "127.0.0.1:6379",
+		TLSConfig: &tls.Config{ServerName: "redis.local"},
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	clientOpt, ok := cfg.Redis.(asynq.RedisClientOpt)
+	if !ok {
+		t.Fatalf("expected pointer form to be normalized to asynq.RedisClientOpt, got %T", cfg.Redis)
+	}
+
+	if clientOpt.TLSConfig == nil || clientOpt.TLSConfig.ServerName != "redis.local" {
+		t.Fatal("expected tls config to be cloned through pointer form")
+	}
+}
+
+func TestNewConfigAppliesSchedulerPostEnqueueFunc(t *testing.T) {
+	postCalled := false
+
+	cfg, err := NewConfig(
+		WithSchedulerPostEnqueueFunc(func(*asynq.TaskInfo, error) {
+			postCalled = true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	opts := cfg.schedulerOptions()
+	if opts.PostEnqueueFunc == nil {
+		t.Fatal("expected post enqueue func to be carried into scheduler options")
+	}
+
+	opts.PostEnqueueFunc(nil, nil)
+
+	if !postCalled {
+		t.Fatal("expected configured post enqueue func to be wired through")
+	}
+}

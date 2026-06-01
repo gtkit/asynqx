@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.2.0 - 2026-06-01
+
+### Added
+
+- 新增 `WithGroupAggregator`（及 `Config.GroupAggregator` 字段），打通任务聚合：此前虽有 `WithTaskGroup` 与聚合调参，但缺少服务端聚合器入口，分组任务不会被聚合处理。现在配置聚合器后 asynq 才会启动聚合协程。
+- 新增 `WithSchedulerPostEnqueueFunc`（及 `Config.SchedulerPostEnqueueFunc` 字段），用于观测调度器投递周期任务的结果；`err != nil` 表示投递失败，可据此告警。采用 asynq 的 `PostEnqueueFunc`（其 `EnqueueErrorHandler` 已弃用）。
+
 ## v1.1.1 - 2026-06-01
 
 ### Fixed

@@ -363,13 +363,37 @@ func (l gtkitLoggerAdapter) Fatal(args ...any) { l.log.Fatal(args...) }
 - `WithGroupGracePeriod(interval time.Duration)`
 - `WithGroupMaxDelay(interval time.Duration)`
 - `WithGroupMaxSize(size int)`
+- `WithGroupAggregator(aggregator asynq.GroupAggregator)`
 - `WithMiddleware(middlewares ...asynq.MiddlewareFunc)`
+- `WithSchedulerPostEnqueueFunc(fn func(info *asynq.TaskInfo, err error))`（仅 Scheduler；`err != nil` 表示该次周期任务投递失败）
 - `WithIsFailure(fn func(error) bool)`
 - `WithDefaultTaskTimeout(timeout time.Duration)`
 - `WithPingOnStart(enabled bool)`
 - `WithPingTimeout(timeout time.Duration)`
 
 `WithDefaultTaskTimeout(0)` 表示不注入默认任务超时；此时只有显式传入 `WithTaskTimeout` 的任务才会携带 timeout 选项。任务已经显式配置 `WithTaskTimeout` 或 `WithTaskDeadline` 时，不会再注入默认任务超时。
+
+### 任务聚合
+
+使用任务聚合时，投递端用 `WithTaskGroup` 把任务放进分组，Worker 端**必须**配置 `WithGroupAggregator`：未配置聚合器时 asynq 不会启动聚合协程，分组任务只会滞留在 group 中，不会被聚合处理。`WithGroupGracePeriod` / `WithGroupMaxDelay` / `WithGroupMaxSize` 用于控制聚合触发时机。
+
+```go
+worker, err := asynqx.NewWorker(
+	asynqx.WithRedisAddr("127.0.0.1:6379"),
+	asynqx.WithGroupGracePeriod(2*time.Second),
+	asynqx.WithGroupMaxDelay(30*time.Second),
+	asynqx.WithGroupMaxSize(20),
+	asynqx.WithGroupAggregator(asynq.GroupAggregatorFunc(
+		func(group string, tasks []*asynq.Task) *asynq.Task {
+			// 将同组多个任务合并为一个任务
+			return asynq.NewTask("notification:batch", aggregatePayload(tasks))
+		},
+	)),
+)
+
+// 投递端把任务放进分组
+_, err = producer.Enqueue(ctx, "notification:push", payload, asynqx.WithTaskGroup("user-42"))
+```
 
 ## 任务选项
 
