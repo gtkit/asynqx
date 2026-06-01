@@ -464,3 +464,45 @@ func TestSchedulerRunUsesConfiguredShutdownTimeout(t *testing.T) {
 
 	close(runner.blockShutdown)
 }
+
+// TestSchedulerStartErrorDoesNotOverrideConcurrentShutdown 压测 Start 失败路径与并发
+// Shutdown 的逻辑竞态。若 Start 在 runner.Start 失败后无条件把状态写回 idle，会覆盖
+// 并发 Shutdown 刚 CAS 写入的 stopping，使 Shutdown 永久阻塞在 waitStopped。
+//
+// 该竞态发生在失败路径相邻的两条原子操作（读状态、写状态）之间，无法用通道确定性切分，
+// 因此以高频并发压测兜底：对正确实现而言 Shutdown 必定及时返回、循环很快跑完；只有当
+// 回归出现状态覆盖时，并发 Shutdown 才会挂起并触发超时。该测试不会对正确实现误报。
+var errSchedulerStartFailed = errors.New("scheduler start failed")
+
+func TestSchedulerStartErrorDoesNotOverrideConcurrentShutdown(t *testing.T) {
+	for iteration := range 5000 {
+		runner := &stubSchedulerRunner{startErr: errSchedulerStartFailed}
+		scheduler := newTestScheduler(t, runner)
+
+		ready := make(chan struct{})
+		startErr := make(chan error, 1)
+		shutdownErr := make(chan error, 1)
+
+		go func() {
+			<-ready
+
+			startErr <- scheduler.Start(context.Background())
+		}()
+
+		go func() {
+			<-ready
+
+			shutdownErr <- scheduler.Shutdown(context.Background())
+		}()
+
+		close(ready)
+
+		select {
+		case <-shutdownErr:
+		case <-time.After(3 * time.Second):
+			t.Fatalf("iteration %d: shutdown hung — start failure path overrode concurrent stopping", iteration)
+		}
+
+		<-startErr
+	}
+}

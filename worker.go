@@ -235,13 +235,15 @@ func (w *Worker) Start(ctx context.Context) error {
 
 	err = w.runner.Start(w.mux)
 	if err != nil {
+		if w.state.CompareAndSwap(workerStateStarting, workerStateIdle) {
+			return err
+		}
+
 		if w.state.Load() == workerStateStopping {
 			w.beginStop(false)
 
 			return ErrWorkerStopped
 		}
-
-		w.state.Store(workerStateIdle)
 
 		return err
 	}

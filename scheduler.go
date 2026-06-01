@@ -256,13 +256,15 @@ func (s *Scheduler) Start(ctx context.Context) error {
 
 	err = s.runner.Start()
 	if err != nil {
+		if s.state.CompareAndSwap(schedulerStateStarting, schedulerStateIdle) {
+			return err
+		}
+
 		if s.state.Load() == schedulerStateStopping {
 			s.beginStop(false)
 
 			return ErrSchedulerStopped
 		}
-
-		s.state.Store(schedulerStateIdle)
 
 		return err
 	}

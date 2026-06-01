@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.1 - 2026-06-01
+
+### Fixed
+
+- 修复 `Worker.Start` / `Scheduler.Start` 失败路径的逻辑竞态：`runner.Start` 返回错误后无条件将状态写回 `idle`，可能覆盖并发 `Shutdown` 刚写入的 `stopping`，导致 `Shutdown` 永久阻塞且底层 Redis 连接泄漏。改为 `CompareAndSwap(starting, idle)`，与 ctx 取消路径保持一致。
+
 ## v1.1.0 - 2026-05-29
 
 ### Breaking Changes
