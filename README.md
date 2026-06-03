@@ -26,6 +26,10 @@
 - 任务超时、截止时间、最大重试、唯一任务、保留期
 - 泛型任务处理器注册
 - 原始 `asynq.Task` 处理器注册
+- 类型安全的任务定义（`TaskType[T]`，编译期保证投递端与消费端类型一致）
+- 处理器内便捷读取任务元信息（ID / 队列 / 重试状态）
+- 终态失败日志处理器（`NewLogErrorHandler`，避免静默失败）
+- 封顶指数退避重试预设（`CappedExponentialBackoff`）
 - 周期任务注册与取消
 - 队列状态检查器接入
 - 幂等关闭
@@ -304,6 +308,21 @@ func main() {
 
 需要多个组件复用同一组配置时，可以先构造 `Config`，再传给 `NewProducerFromConfig`、`NewWorkerFromConfig`、`NewSchedulerFromConfig` 或 `NewInspectorFromConfig`。这些构造器会重新复制并校验配置，调用方后续修改原始变量不会影响已经创建的组件。
 
+### 重试退避策略
+
+asynq 默认的重试退避已是指数退避加抖动，但延迟随重试次数无上限增长（默认最多 25 次重试时末次延迟可达数天）。
+若希望指数退避但**封顶**单次延迟，可用 `CappedExponentialBackoff` 并通过 `WithRetryDelayFunc` 注入：
+
+```go
+worker, err := asynqx.NewWorker(
+	asynqx.WithRedisAddr("127.0.0.1:6379"),
+	// 退避按 5s、10s、20s …… 增长，封顶 10 分钟，并在 [delay/2, delay] 内抖动
+	asynqx.WithRetryDelayFunc(asynqx.CappedExponentialBackoff(5*time.Second, 10*time.Minute)),
+)
+```
+
+仅 `Worker` 在重试时使用该函数（投递端不涉及）。等量抖动可避免大量任务在同一时刻集中重试冲击下游。
+
 ### Redis 部署形态
 
 默认配置使用单机 Redis。生产环境可以直接传入 asynq 原生连接配置：
@@ -490,6 +509,54 @@ err := worker.HandleRaw("user:created", func(ctx context.Context, task *asynq.Ta
 })
 ```
 
+### 类型安全的任务定义（推荐）
+
+裸字符串 `taskType` + 各端自行约定 payload 类型时，编译期无法保证两端一致，是最容易出线上 bug 的点。
+`TaskType[T]` 把「任务类型名」和「payload 类型」绑定在一起，投递端、调度端、消费端共享同一份定义，
+类型写错或 payload 类型不匹配会直接编译不过：
+
+```go
+// 集中声明所有任务类型
+var WelcomeEmail = asynqx.NewTaskType[EmailPayload]("email:welcome")
+
+// 投递：payload 必须是 EmailPayload，否则编译失败
+_, err := WelcomeEmail.Enqueue(ctx, producer, EmailPayload{UserID: "u-1001"},
+	asynqx.WithTaskQueue("critical"))
+
+// 消费：handler 直接拿到解码后的 EmailPayload
+err = WelcomeEmail.Handle(worker, func(ctx context.Context, p EmailPayload) error {
+	return nil
+})
+
+// 周期任务同理
+_, err = WelcomeEmail.Register(ctx, scheduler, "@every 1m", EmailPayload{UserID: "u-1001"})
+```
+
+`NewTaskType` 不校验类型名，校验统一在 `Enqueue` / `Register` / `Handle` 时进行，因此可安全地用包级变量声明。
+
+### 在处理器中读取任务元信息
+
+`Handle[T]` 只把解码后的 payload 交给处理器，若还需要任务 ID、所属队列或重试状态，
+可用以下便捷函数从 `context` 读取，无需直接依赖 `asynq` 包：
+
+```go
+err := asynqx.Handle(worker, "user:created", func(ctx context.Context, p UserCreatedPayload) error {
+	meta := asynqx.MetadataFromContext(ctx) // 一次性取全部：ID / Queue / RetryCount / MaxRetry
+
+	if asynqx.IsLastAttempt(ctx) {
+		// 最后一次尝试，再失败将不再重试，可在此落库死信或告警
+	}
+
+	_ = asynqx.TaskID(ctx)
+	_ = asynqx.QueueName(ctx)
+	_ = asynqx.RetryCount(ctx)
+	_ = asynqx.MaxRetry(ctx)
+	_ = meta
+
+	return nil
+})
+```
+
 ### 注册周期任务
 
 ```go
@@ -591,8 +658,13 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 - 按业务任务耗时配置 `WithShutdownTimeout`，让优雅停机预算和任务时长匹配
 - 为 Redis 配置认证、TLS、连接池和超时，生产优先使用 Sentinel 或 Cluster
 - 通过 `WithLogger` 接入统一日志实现
-- 通过 `WithMiddleware` 接入 tracing、metrics、recover 等中间件
+- 通过 `WithMiddleware` 接入 tracing、metrics 等中间件（panic 已由 asynq 自动 recover 并重试，无需自行包 recover 中间件）
+- 通过 `WithErrorHandler(asynqx.NewLogErrorHandler(logger))` 记录终态失败，避免重试耗尽后的失败被静默吞掉
 - 在服务主进程中使用 `Run(ctx)`，由外层信号管理优雅退出
+
+> 关于失败处理：asynq 会自动 recover handler 中的 panic 并触发重试，因此不必再包一层 recover 中间件。
+> 但当 handler 正常返回 `error` 且**重试次数耗尽**时，若未配置 `ErrorHandler`，这类终态失败不会有任何通知。
+> `NewLogErrorHandler` 仅在最后一次尝试时以 Error 级别记录，避免每次重试都打日志造成噪音。
 
 ## 测试
 

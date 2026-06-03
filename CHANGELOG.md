@@ -6,6 +6,10 @@
 
 - 新增 `WithTaskRawOptions(opts ...asynq.Option)`：透传原生 `asynq.Option` 的逃生口，使投递端能使用 asynqx 尚未镜像的任务选项，无需等待本包补充对应的 `WithTask*`。透传选项在镜像选项之后应用（与 asynq「后者覆盖前者」语义一致），其中的超时/截止选项会被默认超时注入逻辑正确识别。
 - 新增 `WithRedisInstance(client redis.UniversalClient)`（及 `Config.RedisClient` 字段）：允许 Producer / Worker / Scheduler / Inspector 复用调用方已创建的 go-redis 客户端，与项目其它部分共享同一个连接池，底层走 asynq 的 `NewClientFromRedisClient` / `NewServerFromRedisClient` / `NewSchedulerFromRedisClient` / `NewInspectorFromRedisClient`。该客户端优先于连接参数选项，且生命周期由调用方负责——asynqx 的 `Shutdown` / `Close` 不会关闭外部传入的客户端。
+- 新增类型安全的任务定义 `TaskType[T]` 与 `NewTaskType[T](name)`：把任务类型名与 payload 类型 `T` 绑定，投递端、调度端、消费端共享同一份定义，编译期保证类型名与 payload 类型一致。提供 `.Enqueue`、`.Register`、`.Handle`、`.Name` 方法，薄委托到 Producer / Scheduler / Worker。
+- 新增处理器内读取任务运行期元信息的便捷函数：`MetadataFromContext`（一次性取 ID / Queue / RetryCount / MaxRetry）、`TaskID`、`QueueName`、`RetryCount`、`MaxRetry`、`IsLastAttempt`，无需在处理器中直接依赖 `asynq` 包。
+- 新增 `NewLogErrorHandler(logger Logger)`：基于 `Logger` 的 `asynq.ErrorHandler`，仅在重试耗尽的终态失败时以 Error 级别记录，避免任务最终失败被静默吞掉；通过 `WithErrorHandler` 注入。
+- 新增 `CappedExponentialBackoff(base, maxDelay)`：返回带上限和等量抖动的指数退避 `asynq.RetryDelayFunc`，弥补 asynq 默认退避随重试次数无上限增长的问题；通过 `WithRetryDelayFunc` 注入。
 
 ## v1.2.0 - 2026-06-01
 
