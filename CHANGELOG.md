@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- 新增 `WithTaskRawOptions(opts ...asynq.Option)`：透传原生 `asynq.Option` 的逃生口，使投递端能使用 asynqx 尚未镜像的任务选项，无需等待本包补充对应的 `WithTask*`。透传选项在镜像选项之后应用（与 asynq「后者覆盖前者」语义一致），其中的超时/截止选项会被默认超时注入逻辑正确识别。
+- 新增 `WithRedisInstance(client redis.UniversalClient)`（及 `Config.RedisClient` 字段）：允许 Producer / Worker / Scheduler / Inspector 复用调用方已创建的 go-redis 客户端，与项目其它部分共享同一个连接池，底层走 asynq 的 `NewClientFromRedisClient` / `NewServerFromRedisClient` / `NewSchedulerFromRedisClient` / `NewInspectorFromRedisClient`。该客户端优先于连接参数选项，且生命周期由调用方负责——asynqx 的 `Shutdown` / `Close` 不会关闭外部传入的客户端。
+
 ## v1.2.0 - 2026-06-01
 
 ### Added

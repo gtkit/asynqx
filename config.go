@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -22,8 +23,13 @@ const (
 
 // Config 表示 Producer、Worker 和 Scheduler 共享的基础配置。
 // 该配置在构造完成后应视为只读，用于统一创建底层 asynq 组件。
+//
+// RedisClient 非 nil 时优先于 Redis：所有组件复用调用方传入的同一个
+// go-redis 客户端（共享连接池），此时 Redis 连接参数被忽略，
+// 且该客户端的生命周期由调用方负责，asynqx 的 Shutdown/Close 不会关闭它。
 type Config struct {
 	Redis                    asynq.RedisConnOpt
+	RedisClient              redis.UniversalClient
 	Concurrency              int
 	Queues                   map[string]int
 	RetryDelayFunc           asynq.RetryDelayFunc
@@ -96,9 +102,11 @@ func (c Config) clone() Config {
 }
 
 func (c Config) validate() error {
-	err := validateRedisOptions(c.Redis)
-	if err != nil {
-		return err
+	if isNilInterface(c.RedisClient) {
+		err := validateRedisOptions(c.Redis)
+		if err != nil {
+			return err
+		}
 	}
 
 	if c.Concurrency <= 0 {
@@ -141,7 +149,7 @@ func (c Config) validate() error {
 		return invalidConfigurationError("group_max_size", "must be >= 0")
 	}
 
-	err = validateQueueWeights(c.Queues)
+	err := validateQueueWeights(c.Queues)
 	if err != nil {
 		return err
 	}

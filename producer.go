@@ -56,6 +56,18 @@ func NewProducerFromConfig(cfg Config) (*Producer, error) {
 }
 
 var defaultProducerClientFactory producerClientFactory = func(cfg Config) (producerClient, error) {
+	if !isNilInterface(cfg.RedisClient) {
+		if cfg.PingOnStart {
+			// 外部共享客户端，Ping 后不关闭，生命周期由调用方负责。
+			err := pingRedisOnStart(context.Background(), cfg.RedisClient, cfg.PingTimeout)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		return asynq.NewClientFromRedisClient(cfg.RedisClient), nil
+	}
+
 	if cfg.PingOnStart {
 		err := pingRedisOptionOnStart(context.Background(), cfg.Redis, cfg.PingTimeout)
 		if err != nil {

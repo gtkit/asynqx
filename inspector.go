@@ -53,6 +53,18 @@ func newInspector(cfg Config, factory inspectorClientFactory) (*Inspector, error
 }
 
 var defaultInspectorClientFactory inspectorClientFactory = func(cfg Config) (*Inspector, error) {
+	if !isNilInterface(cfg.RedisClient) {
+		if cfg.PingOnStart {
+			// 外部共享客户端，Ping 后不关闭，生命周期由调用方负责。
+			err := pingRedisOnStart(context.Background(), cfg.RedisClient, cfg.PingTimeout)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		return asynq.NewInspectorFromRedisClient(cfg.RedisClient), nil
+	}
+
 	if cfg.PingOnStart {
 		err := pingRedisOptionOnStart(context.Background(), cfg.Redis, cfg.PingTimeout)
 		if err != nil {

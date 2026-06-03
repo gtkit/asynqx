@@ -1,6 +1,7 @@
 package asynqx
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ type taskOptions struct {
 	hasRetention bool
 	taskID       string
 	hasTaskID    bool
+	raw          []asynq.Option
 }
 
 // WithTaskQueue 设置任务队列名。
@@ -182,6 +184,23 @@ func WithTaskID(taskID string) TaskOption {
 	}
 }
 
+// WithTaskRawOptions 透传原生 asynq.Option，用于投递 asynqx 尚未镜像的能力。
+// 透传选项在镜像选项之后应用，与 asynq「后者覆盖前者」的语义一致，
+// 因此可用它覆盖由 WithTaskQueue 等生成的选项；其中的超时/截止选项也会被默认超时注入逻辑识别。
+func WithTaskRawOptions(opts ...asynq.Option) TaskOption {
+	return func(resolved *taskOptions) error {
+		for i, opt := range opts {
+			if opt == nil {
+				return invalidTaskOptionError(fmt.Sprintf("raw_options[%d]", i), "must not be nil")
+			}
+		}
+
+		resolved.raw = append(resolved.raw, opts...)
+
+		return nil
+	}
+}
+
 func marshalPayload(payload any) ([]byte, error) {
 	return json.Marshal(payload)
 }
@@ -237,6 +256,10 @@ func buildTaskOptions(opts ...TaskOption) ([]asynq.Option, error) {
 
 	if resolved.hasTaskID {
 		built = append(built, asynq.TaskID(resolved.taskID))
+	}
+
+	if len(resolved.raw) > 0 {
+		built = append(built, resolved.raw...)
 	}
 
 	return built, nil

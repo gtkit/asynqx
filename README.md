@@ -285,6 +285,7 @@ func main() {
 
 - `WithRedis(opt asynq.RedisConnOpt)`
 - `WithRedisClient(opt asynq.RedisClientOpt)`
+- `WithRedisInstance(client redis.UniversalClient)`
 - `WithRedisFailover(opt asynq.RedisFailoverClientOpt)`
 - `WithRedisCluster(opt asynq.RedisClusterClientOpt)`
 - `WithRedisAddr(addr string)`
@@ -332,6 +333,29 @@ producer, err := asynqx.NewProducer(
 `WithRedisAddr`、`WithRedisUser`、`WithRedisPassword` 等便捷选项只适用于单机 Redis。已经使用 Sentinel 或 Cluster 配置后，不应再叠加这些单机字段选项。
 
 默认情况下 Redis 连接保持 asynq/go-redis 的懒连接语义。需要启动时尽早暴露 Redis 不可达问题时，可以显式配置 `WithPingOnStart(true)`；该选项会在组件创建阶段执行一次 `PING`，失败时直接返回错误。`WithPingTimeout` 可限制这次探活的等待时间，传入 `0` 表示只使用 Redis 客户端自身的超时配置。
+
+### 复用项目已有的 Redis 客户端
+
+前面的连接参数选项（`WithRedisAddr` / `WithRedis` 等）会让每个组件各自新建连接池。如果项目里已经有一个用 `github.com/redis/go-redis/v9` 创建的客户端，希望 Producer / Worker / Scheduler / Inspector 与项目其它部分**共享同一个连接池**，用 `WithRedisInstance` 把该客户端直接传进来：
+
+```go
+rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379", DB: 0})
+defer rdb.Close() // 客户端由调用方关闭
+
+cfg, err := asynqx.NewConfig(asynqx.WithRedisInstance(rdb))
+if err != nil {
+	// 处理错误
+}
+
+producer, _ := asynqx.NewProducerFromConfig(cfg)
+worker, _ := asynqx.NewWorkerFromConfig(cfg)
+```
+
+注意事项：
+
+- `WithRedisInstance` 优先级高于所有连接参数选项；传入后 `WithRedisAddr` / `WithRedis` 等会被忽略。
+- 传入的客户端**生命周期由调用方负责**：组件的 `Shutdown` / `Close` 不会关闭它。请在所有 asynqx 组件关闭之后，再由调用方关闭该客户端，否则可能在组件仍在运行时切断连接。
+- `client` 接受任意 `redis.UniversalClient`（单机 `*redis.Client`、`*redis.ClusterClient`、`*redis.FailoverClient` 等均可）。
 
 ### gtkit/logger 接入示例
 
@@ -409,6 +433,19 @@ _, err = producer.Enqueue(ctx, "notification:push", payload, asynqx.WithTaskGrou
 - `WithTaskUnique(ttl time.Duration)`
 - `WithTaskRetention(retention time.Duration)`
 - `WithTaskID(taskID string)`
+- `WithTaskRawOptions(opts ...asynq.Option)`
+
+`WithTaskRawOptions` 是逃生口：当需要使用 asynqx 尚未镜像的原生 `asynq.Option` 时，直接透传即可，无需等待本包补充对应的 `WithTask*`。透传选项在镜像选项之后应用，与 asynq「后者覆盖前者」语义一致，因此也可用它覆盖镜像选项；其中的超时/截止选项会被默认超时注入逻辑识别。
+
+```go
+_, err := producer.Enqueue(
+	ctx,
+	"email:welcome",
+	payload,
+	asynqx.WithTaskQueue("critical"),
+	asynqx.WithTaskRawOptions(asynq.Retention(24*time.Hour)),
+)
+```
 
 `Producer.Enqueue` 和 `Scheduler.Register` 会将 payload 序列化为 JSON 后写入 asynq 任务；传入 `[]byte` 也会按 JSON 规则编码，而不是作为原始字节透传。
 

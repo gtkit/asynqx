@@ -103,6 +103,70 @@ func TestBuildTaskOptionsRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+func TestBuildTaskOptionsAppendsRawOptions(t *testing.T) {
+	opts, err := buildTaskOptions(
+		WithTaskQueue("critical"),
+		WithTaskRawOptions(asynq.MaxRetry(3), asynq.Retention(time.Hour)),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertOptionSet(t, opts, map[asynq.OptionType]any{
+		asynq.QueueOpt:     "critical",
+		asynq.MaxRetryOpt:  3,
+		asynq.RetentionOpt: time.Hour,
+	})
+}
+
+func TestBuildTaskOptionsRawOptionsAppendedLast(t *testing.T) {
+	opts, err := buildTaskOptions(
+		WithTaskQueue("default"),
+		WithTaskRawOptions(asynq.Queue("critical")),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(opts) != 2 {
+		t.Fatalf("expected 2 options, got %d", len(opts))
+	}
+
+	if opts[0].Type() != asynq.QueueOpt || opts[0].Value() != "default" {
+		t.Fatalf("expected mirrored queue first, got %v=%#v", opts[0].Type(), opts[0].Value())
+	}
+
+	if opts[1].Type() != asynq.QueueOpt || opts[1].Value() != "critical" {
+		t.Fatalf("expected raw queue last, got %v=%#v", opts[1].Type(), opts[1].Value())
+	}
+}
+
+func TestBuildTaskOptionsRejectsNilRawOption(t *testing.T) {
+	_, err := buildTaskOptions(WithTaskRawOptions(asynq.Queue("critical"), nil))
+	if err == nil {
+		t.Fatal("expected error for nil raw option")
+	}
+
+	if !errors.Is(err, ErrInvalidTaskOption) {
+		t.Fatalf("expected ErrInvalidTaskOption, got %v", err)
+	}
+}
+
+func TestApplyDefaultTaskTimeoutSkipsRawTimeout(t *testing.T) {
+	built, err := buildTaskOptions(WithTaskRawOptions(asynq.Timeout(time.Minute)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	opts := applyDefaultTaskTimeout(built, defaultTaskTimeout)
+
+	if len(opts) != 1 {
+		t.Fatalf("expected raw timeout to prevent default injection, got %d options", len(opts))
+	}
+
+	assertAsynqOption(t, opts[0], asynq.TimeoutOpt, time.Minute)
+}
+
 func TestBuildTaskOptionsProcessAtOverridesDelay(t *testing.T) {
 	processAt := time.Date(2026, 3, 25, 11, 0, 0, 0, time.UTC)
 

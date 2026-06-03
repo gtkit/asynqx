@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
 )
 
 // ConfigOption 表示作用于共享基础配置的选项。
@@ -186,6 +187,24 @@ func WithRedisFailover(opt asynq.RedisFailoverClientOpt) ConfigOption {
 func WithRedisCluster(opt asynq.RedisClusterClientOpt) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.Redis = cloneRedisClusterOptions(opt)
+
+		return nil
+	}
+}
+
+// WithRedisInstance 直接复用调用方已创建的 go-redis 客户端（redis.UniversalClient），
+// 使 Producer、Worker、Scheduler 和 Inspector 与项目其它部分共享同一个连接池。
+//
+// 传入后将忽略 WithRedisAddr / WithRedis 等连接参数选项。
+// 该客户端的生命周期由调用方负责：asynqx 的 Shutdown / Close 不会关闭它，
+// 请在所有 asynqx 组件关闭后，再由调用方关闭该客户端。
+func WithRedisInstance(client redis.UniversalClient) ConfigOption {
+	return func(cfg *Config) error {
+		if isNilInterface(client) {
+			return invalidConfigurationError("redis_client", "must not be nil")
+		}
+
+		cfg.RedisClient = client
 
 		return nil
 	}

@@ -88,7 +88,7 @@ func newScheduler(cfg Config, factory schedulerRunnerFactory) (*Scheduler, error
 }
 
 var defaultSchedulerRunnerFactory = func(cfg Config) (schedulerRunner, error) {
-	redisClient, err := newRedisUniversalClient(cfg.Redis)
+	redisClient, ownsClient, err := resolveRedisClient(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,9 @@ var defaultSchedulerRunnerFactory = func(cfg Config) (schedulerRunner, error) {
 	if cfg.PingOnStart {
 		err = pingRedisOnStart(context.Background(), redisClient, cfg.PingTimeout)
 		if err != nil {
-			_ = redisClient.Close()
+			if ownsClient {
+				_ = redisClient.Close()
+			}
 
 			return nil, err
 		}
@@ -104,20 +106,23 @@ var defaultSchedulerRunnerFactory = func(cfg Config) (schedulerRunner, error) {
 
 	runner := asynq.NewSchedulerFromRedisClient(redisClient, cfg.schedulerOptions())
 	if runner == nil {
-		closeErr := redisClient.Close()
-		if closeErr != nil {
-			return nil, invalidConfigurationError("scheduler.runner", closeErr.Error())
+		if ownsClient {
+			closeErr := redisClient.Close()
+			if closeErr != nil {
+				return nil, invalidConfigurationError("scheduler.runner", closeErr.Error())
+			}
 		}
 
 		return nil, invalidConfigurationError("scheduler.runner", "must not be nil")
 	}
 
-	return &managedSchedulerRunner{runner: runner, redisClient: redisClient}, nil
+	return &managedSchedulerRunner{runner: runner, redisClient: redisClient, ownsClient: ownsClient}, nil
 }
 
 type managedSchedulerRunner struct {
 	runner      *asynq.Scheduler
 	redisClient redis.UniversalClient
+	ownsClient  bool
 	closeOnce   sync.Once
 }
 
@@ -136,7 +141,10 @@ func (r *managedSchedulerRunner) Start() error {
 func (r *managedSchedulerRunner) Shutdown() {
 	r.closeOnce.Do(func() {
 		r.runner.Shutdown()
-		_ = r.redisClient.Close()
+
+		if r.ownsClient {
+			_ = r.redisClient.Close()
+		}
 	})
 }
 

@@ -96,7 +96,7 @@ func newWorker(cfg Config, factory workerRunnerFactory) (*Worker, error) {
 }
 
 var defaultWorkerRunnerFactory = func(cfg Config) (workerRunner, error) {
-	redisClient, err := newRedisUniversalClient(cfg.Redis)
+	redisClient, ownsClient, err := resolveRedisClient(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +104,9 @@ var defaultWorkerRunnerFactory = func(cfg Config) (workerRunner, error) {
 	if cfg.PingOnStart {
 		err = pingRedisOnStart(context.Background(), redisClient, cfg.PingTimeout)
 		if err != nil {
-			_ = redisClient.Close()
+			if ownsClient {
+				_ = redisClient.Close()
+			}
 
 			return nil, err
 		}
@@ -112,20 +114,23 @@ var defaultWorkerRunnerFactory = func(cfg Config) (workerRunner, error) {
 
 	runner := asynq.NewServerFromRedisClient(redisClient, cfg.asynqConfig())
 	if runner == nil {
-		closeErr := redisClient.Close()
-		if closeErr != nil {
-			return nil, fmt.Errorf("%w: %w", invalidConfigurationError("worker.runner", "must not be nil"), closeErr)
+		if ownsClient {
+			closeErr := redisClient.Close()
+			if closeErr != nil {
+				return nil, fmt.Errorf("%w: %w", invalidConfigurationError("worker.runner", "must not be nil"), closeErr)
+			}
 		}
 
 		return nil, invalidConfigurationError("worker.runner", "must not be nil")
 	}
 
-	return &managedWorkerRunner{runner: runner, redisClient: redisClient}, nil
+	return &managedWorkerRunner{runner: runner, redisClient: redisClient, ownsClient: ownsClient}, nil
 }
 
 type managedWorkerRunner struct {
 	runner      *asynq.Server
 	redisClient redis.UniversalClient
+	ownsClient  bool
 	closeOnce   sync.Once
 }
 
@@ -136,7 +141,10 @@ func (r *managedWorkerRunner) Start(handler asynq.Handler) error {
 func (r *managedWorkerRunner) Shutdown() {
 	r.closeOnce.Do(func() {
 		r.runner.Shutdown()
-		_ = r.redisClient.Close()
+
+		if r.ownsClient {
+			_ = r.redisClient.Close()
+		}
 	})
 }
 
