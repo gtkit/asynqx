@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.4.0 - 2026-06-14
+
+### Added
+
+- 新增 `App` 统一入口（`New` / `NewFromConfig`）：写一份配置，内部解析并共享同一个 Redis 连接池，按需懒创建并统一管理 Producer / Worker / Scheduler / Inspector 的生命周期。提供 `Enqueue` / `HandleRaw` / `Register` / `Start` / `Run` / `Shutdown` / `Close`，以及 `Producer()` / `Worker()` / `Scheduler()` / `Inspector()` 逃生口。`App.Run` 启动消费侧并阻塞至 ctx 取消，随后优雅关闭全部组件与连接。
+- 新增 `Enqueuer` / `Registrar` / `PeriodicRegistrar` 三个小接口；`TaskType` 的 `Enqueue` / `Register` / `Handle` 与顶层 `Handle[T]` 改为接受接口，因此既可传 `App`，也可传细粒度的 `Producer` / `Worker` / `Scheduler`（`*Producer`/`*Worker`/`*Scheduler` 均已满足接口，现有调用无需改动），并便于在测试中注入 mock。
+- 新增 `NewTask[T]`（`NewTaskType[T]` 的简写别名）与 `AppOption`（`ConfigOption` 别名）。
+- 新增 `//go:build integration` 的 App 端到端集成冒烟测试。
+
+### Changed
+
+- README 增加"推荐：使用 App"章节，将细粒度的四件套构造器定位为进阶用法。
+
+### 路线图（v2 计划，本次不做以保持向后兼容）
+
+- 选项层瘦身：约三分之一的 `WithXxx` 是 `asynq.Config` 字段的纯透传镜像（如 `WithStrictPriority` / `WithHealthCheckFunc` / `WithDelayedTaskCheckInterval` / `WithGroupMaxDelay` 等），可由 `Config` 字面量替代；Redis 三形态的 clone/validate 样板也较多。这些移除属破坏性变更，计划在 v2 收敛。
+
 ## v1.3.1 - 2026-06-14
 
 ### Changed

@@ -178,17 +178,17 @@ func (w *Worker) HandleRaw(taskType string, handler func(context.Context, *asynq
 	return nil
 }
 
-// Handle 注册带泛型 payload 解码的处理器。
-func Handle[T any](worker *Worker, taskType string, handler func(context.Context, T) error) error {
-	if worker == nil {
-		return invalidArgumentError("worker", "must not be nil")
+// Handle 通过任意 Registrar（*Worker 或 *App）注册带泛型 payload 解码的处理器。
+func Handle[T any](registrar Registrar, taskType string, handler func(context.Context, T) error) error {
+	if isNilInterface(registrar) {
+		return invalidArgumentError("registrar", "must not be nil")
 	}
 
 	if handler == nil {
 		return invalidArgumentError("handler", "must not be nil")
 	}
 
-	return worker.HandleRaw(taskType, func(ctx context.Context, task *asynq.Task) error {
+	return registrar.HandleRaw(taskType, func(ctx context.Context, task *asynq.Task) error {
 		var payload T
 
 		err := json.Unmarshal(task.Payload(), &payload)

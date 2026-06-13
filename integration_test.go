@@ -279,3 +279,71 @@ func TestIntegrationInspectorExternalClientCloseKeepsClientUsable(t *testing.T) 
 		t.Fatalf("外部客户端在 Inspector.Close 后应仍然可用: %v", err)
 	}
 }
+
+// TestIntegrationAppEndToEnd 验证 App 容器：一份配置、共享连接池，同一个 App 既消费也投递，
+// 任务类型经 TaskType 类型安全往返，Run 在 ctx 取消后优雅关闭。
+func TestIntegrationAppEndToEnd(t *testing.T) {
+	_, db := newTestRedisClient(t)
+
+	const (
+		taskType = "integration:app"
+		queue    = "integration"
+	)
+
+	type payload struct {
+		Name string `json:"name"`
+	}
+
+	got := make(chan payload, 1)
+
+	app, err := asynqx.New(
+		asynqx.WithRedisAddr(testRedisAddr()),
+		asynqx.WithRedisDB(db),
+		asynqx.WithQueues(map[string]int{queue: 1}),
+	)
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	task := asynqx.NewTask[payload](taskType)
+
+	// 注册必须在 Run 之前。
+	if err = task.Handle(app, func(_ context.Context, p payload) error {
+		select {
+		case got <- p:
+		default:
+		}
+
+		return nil
+	}); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- app.Run(ctx) }()
+
+	// 同一个 App 投递（懒创建 Producer，复用同一连接池）。
+	if _, err = task.Enqueue(
+		context.Background(), app, payload{Name: "alice"}, asynqx.WithTaskQueue(queue),
+	); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	select {
+	case p := <-got:
+		if p.Name != "alice" {
+			t.Fatalf("payload 往返不一致: %+v", p)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("超时: App 未在 15s 内消费任务")
+	}
+
+	cancel()
+
+	if err = <-runErr; err != nil {
+		t.Fatalf("app run: %v", err)
+	}
+}

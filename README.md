@@ -43,6 +43,49 @@ go get github.com/gtkit/asynqx
 
 ## 快速开始
 
+### 推荐：使用 App（一份配置，多种角色）
+
+`App` 是最省心的入口：写一份配置，内部共享同一个 Redis 连接池，按需提供投递 / 消费 / 调度 / 检查能力。配合 `TaskType[T]`，做到类型安全、业务代码零 asynq 依赖。
+
+```go
+// 任务定义：单一事实来源，投递端与消费端共用
+var WelcomeEmail = asynqx.NewTask[EmailPayload]("email:welcome")
+
+// 生产者
+app, err := asynqx.New(asynqx.WithRedisAddr("127.0.0.1:6379"))
+if err != nil {
+	log.Fatal(err)
+}
+defer app.Close()
+
+_, _ = WelcomeEmail.Enqueue(context.Background(), app, EmailPayload{UserID: "u-1001"})
+```
+
+```go
+// 消费者（同样一份配置写法）
+app, err := asynqx.New(asynqx.WithRedisAddr("127.0.0.1:6379"))
+if err != nil {
+	log.Fatal(err)
+}
+
+// 注册必须在 Run 之前；handler 只见 payload，零 asynq 依赖
+_ = WelcomeEmail.Handle(app, func(ctx context.Context, p EmailPayload) error {
+	// 纯业务逻辑；需要元信息时用 asynqx.RetryCount(ctx) / asynqx.TaskID(ctx) 等
+	return nil
+})
+
+// 启动消费、阻塞至 ctx 取消、优雅关闭全部组件与连接
+if err := app.Run(ctx); err != nil {
+	log.Fatal(err)
+}
+```
+
+`App` 同时实现 `Enqueuer` / `Registrar` / `PeriodicRegistrar`，因此 `TaskType` 的 `Enqueue` / `Handle` / `Register` 既能传 `App`，也能传细粒度的 `Producer` / `Worker` / `Scheduler`（向后兼容）。需要底层组件时用 `app.Producer()` / `app.Worker()` / `app.Scheduler()` / `app.Inspector()`。
+
+> `App` 让所有组件共享一个连接池，因此 `Scheduler` 关闭时 asynq 会打印一条无害的 `redis connection is shared` 日志（连接由 `App` 统一关闭）。
+
+下面的细粒度构造器（`NewProducer` / `NewWorker` / …）适合需要单独管理各组件的进阶场景。
+
 ### 1. 创建 Producer
 
 ```go
