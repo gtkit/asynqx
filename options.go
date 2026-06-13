@@ -21,6 +21,9 @@ type WorkerOption = ConfigOption
 // SchedulerOption 表示 Scheduler 使用的配置选项。
 type SchedulerOption = ConfigOption
 
+// InspectorOption 表示 Inspector 使用的配置选项。
+type InspectorOption = ConfigOption
+
 // WithRedisAddr 设置共享配置中的 Redis 地址。
 func WithRedisAddr(addr string) ConfigOption {
 	return func(cfg *Config) error {

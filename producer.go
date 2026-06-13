@@ -11,13 +11,14 @@ import (
 
 // Producer 负责投递任务到 asynq。
 type Producer struct {
-	cfg       Config
-	client    atomic.Pointer[producerClientRef]
-	closed    atomic.Bool
-	active    activityCounter
-	closeDone chan struct{}
-	closeMu   sync.Mutex
-	closeErr  error
+	cfg        Config
+	client     atomic.Pointer[producerClientRef]
+	ownsClient bool
+	closed     atomic.Bool
+	active     activityCounter
+	closeDone  chan struct{}
+	closeMu    sync.Mutex
+	closeErr   error
 }
 
 type producerClient interface {
@@ -93,9 +94,12 @@ func newProducer(cfg Config, factory producerClientFactory) (*Producer, error) {
 	}
 
 	producer := &Producer{
-		cfg:       cfg.clone(),
-		active:    newActivityCounter(),
-		closeDone: make(chan struct{}),
+		cfg: cfg.clone(),
+		// 外部共享客户端（WithRedisInstance）由调用方负责关闭；仅当 asynqx 自行
+		// 按连接参数创建客户端时才拥有其生命周期，Close 时才真正关闭底层连接。
+		ownsClient: isNilInterface(cfg.RedisClient),
+		active:     newActivityCounter(),
+		closeDone:  make(chan struct{}),
 	}
 	producer.client.Store(&producerClientRef{client: client})
 
@@ -119,6 +123,10 @@ func (b *Producer) Enqueue(
 
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	clientRef, release, err := b.acquireClient()
@@ -207,6 +215,13 @@ func (b *Producer) finishClose(clientRef *producerClientRef) {
 	b.active.Wait()
 
 	if clientRef == nil || clientRef.client == nil {
+		return
+	}
+
+	// 复用外部共享客户端时，其生命周期由调用方负责：asynq 的 Client.Close 对共享
+	// 连接会返回 "redis connection is shared" 错误且不会真正关闭连接。这里直接跳过，
+	// 避免把这个预期内的"错误"当作关闭失败回传给调用方。
+	if !b.ownsClient {
 		return
 	}
 

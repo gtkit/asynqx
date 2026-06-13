@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gtkit/json"
+	"github.com/gtkit/json/v2"
 	"github.com/hibiken/asynq"
 )
 
@@ -505,4 +505,42 @@ func TestSchedulerStartErrorDoesNotOverrideConcurrentShutdown(t *testing.T) {
 
 		<-startErr
 	}
+}
+
+// TestSchedulerRunnerFactoryConstructs 覆盖 defaultSchedulerRunnerFactory 的两个分支：
+// 外部共享客户端走 NewSchedulerFromRedisClient，单机连接参数走 asynq.NewScheduler
+// （由 asynq 自建并在 Shutdown 时干净关闭其内部客户端，避免共享连接关闭错误日志）。
+// 两条路径在构造期均为惰性，不连接 Redis；未启动的 Shutdown 在 asynq 中直接返回。
+func TestSchedulerRunnerFactoryConstructs(t *testing.T) {
+	extCfg, err := NewConfig(WithRedisInstance(&stubRedisClient{}))
+	if err != nil {
+		t.Fatalf("unexpected config error (external): %v", err)
+	}
+
+	extRunner, err := defaultSchedulerRunnerFactory(extCfg)
+	if err != nil {
+		t.Fatalf("unexpected factory error (external): %v", err)
+	}
+
+	if extRunner == nil {
+		t.Fatal("expected non-nil runner for external client")
+	}
+
+	extRunner.Shutdown()
+
+	ownedCfg, err := NewConfig(WithRedisAddr(defaultRedisAddress))
+	if err != nil {
+		t.Fatalf("unexpected config error (owned): %v", err)
+	}
+
+	ownedRunner, err := defaultSchedulerRunnerFactory(ownedCfg)
+	if err != nil {
+		t.Fatalf("unexpected factory error (owned): %v", err)
+	}
+
+	if ownedRunner == nil {
+		t.Fatal("expected non-nil runner for owned client")
+	}
+
+	ownedRunner.Shutdown()
 }

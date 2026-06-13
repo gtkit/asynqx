@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gtkit/json"
+	"github.com/gtkit/json/v2"
 	"github.com/hibiken/asynq"
 )
 

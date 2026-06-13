@@ -7,7 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/gtkit/json"
+	"github.com/gtkit/json/v2"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 )

@@ -229,7 +229,7 @@ func main() {
 
 公开方法：
 
-- `NewInspector(opts ...ConfigOption) (*Inspector, error)`
+- `NewInspector(opts ...InspectorOption) (*Inspector, error)`
 - `NewInspectorFromConfig(cfg Config) (*Inspector, error)`
 - `(*Inspector).Close() error`
 
@@ -237,6 +237,7 @@ func main() {
 
 - `Inspector` 使用与 `Producer`、`Worker`、`Scheduler` 相同的 Redis 配置
 - 调用方不再使用时应调用 `Close`
+- 复用外部共享客户端（`WithRedisInstance`）时，`Close` 会返回 asynq 的 `redis connection is shared` 错误且不会关闭连接，可忽略该错误，由调用方自行关闭外部客户端
 
 ### Worker
 
@@ -375,6 +376,7 @@ worker, _ := asynqx.NewWorkerFromConfig(cfg)
 - `WithRedisInstance` 优先级高于所有连接参数选项；传入后 `WithRedisAddr` / `WithRedis` 等会被忽略。
 - 传入的客户端**生命周期由调用方负责**：组件的 `Shutdown` / `Close` 不会关闭它。请在所有 asynqx 组件关闭之后，再由调用方关闭该客户端，否则可能在组件仍在运行时切断连接。
 - `client` 接受任意 `redis.UniversalClient`（单机 `*redis.Client`、`*redis.ClusterClient`、`*redis.FailoverClient` 等均可）。
+- 复用外部客户端时，`Scheduler` 关闭会由 asynq 内部打印一条无害的 `redis connection is shared` 日志（asynq 的 `Scheduler.Shutdown` 始终尝试关闭连接），连接本身不会被关闭，可安全忽略；asynqx 自建连接的 `Scheduler` 不会有该日志。同理 `Inspector.Close` 会返回该错误。
 
 ### gtkit/logger 接入示例
 

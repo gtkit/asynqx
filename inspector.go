@@ -13,7 +13,11 @@ type inspectorClientFactory func(Config) (*Inspector, error)
 
 // NewInspector 基于共享配置创建 asynq 队列检查器。
 // 调用成功后，调用方应调用 Close 释放底层资源。
-func NewInspector(opts ...ConfigOption) (*Inspector, error) {
+//
+// 注意：当通过 WithRedisInstance 复用外部共享客户端时，连接生命周期由调用方负责。
+// 此时 Inspector.Close 会返回 asynq 的 "redis connection is shared" 错误且不会关闭连接，
+// 调用方可忽略该错误，并在所有 asynqx 组件关闭后自行关闭外部客户端。
+func NewInspector(opts ...InspectorOption) (*Inspector, error) {
 	cfg, err := NewConfig(opts...)
 	if err != nil {
 		return nil, err

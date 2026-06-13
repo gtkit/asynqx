@@ -9,6 +9,9 @@ import (
 	"github.com/hibiken/asynq"
 )
 
+// errSharedRedisConnection 模拟 asynq 对共享连接调用 Close 时返回的错误。
+var errSharedRedisConnection = errors.New("redis connection is shared so the Client can't be closed through asynq")
+
 type stubProducerClient struct {
 	enqueueCalls int
 	closeCalls   int
@@ -384,5 +387,80 @@ func TestProducerShutdownRespectsContext(t *testing.T) {
 
 	if client.closeCalls != 1 {
 		t.Fatalf("expected client close to be called once, got %d", client.closeCalls)
+	}
+}
+
+// TestProducerExternalClientCloseSkipsUnderlyingClose 验证复用外部共享客户端
+// （WithRedisInstance）时，Producer.Close 不会调用底层 asynq.Client.Close——asynq 对
+// 共享连接的 Close 会返回 "redis connection is shared" 错误。该错误不应被当作关闭失败
+// 回传给调用方，连接的生命周期由调用方负责。
+func TestProducerExternalClientCloseSkipsUnderlyingClose(t *testing.T) {
+	cfg, err := NewConfig(WithRedisInstance(&stubRedisClient{}))
+	if err != nil {
+		t.Fatalf("unexpected config error: %v", err)
+	}
+
+	client := &stubProducerClient{
+		closeErr: errSharedRedisConnection,
+	}
+
+	producer, err := newProducer(cfg, func(Config) (producerClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected producer error: %v", err)
+	}
+
+	if producer.ownsClient {
+		t.Fatal("expected producer not to own the external shared client")
+	}
+
+	if err = producer.Close(); err != nil {
+		t.Fatalf("expected nil error when closing producer with external client, got %v", err)
+	}
+
+	if client.closeCalls != 0 {
+		t.Fatalf("expected underlying shared client Close to be skipped, got %d calls", client.closeCalls)
+	}
+
+	// 重复关闭仍然安全且返回 nil。
+	if err = producer.Close(); err != nil {
+		t.Fatalf("expected nil error on second close, got %v", err)
+	}
+}
+
+// TestProducerEnqueueRejectsCanceledContext 验证 ctx 已取消时 Enqueue 提前返回 ctx 错误，
+// 不再获取在途计数槽，也不会触达底层 client。
+func TestProducerEnqueueRejectsCanceledContext(t *testing.T) {
+	cfg, err := NewConfig()
+	if err != nil {
+		t.Fatalf("unexpected config error: %v", err)
+	}
+
+	client := &stubProducerClient{}
+
+	producer, err := newProducer(cfg, func(Config) (producerClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected producer error: %v", err)
+	}
+
+	defer func() {
+		if closeErr := producer.Close(); closeErr != nil {
+			t.Fatalf("unexpected close error: %v", closeErr)
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = producer.Enqueue(ctx, "email:send", map[string]string{"id": "1"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+
+	if client.enqueueCalls != 0 {
+		t.Fatalf("expected enqueue to be skipped for canceled context, got %d calls", client.enqueueCalls)
 	}
 }

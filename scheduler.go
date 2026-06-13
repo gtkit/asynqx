@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 
 	"github.com/hibiken/asynq"
-	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -88,42 +87,46 @@ func newScheduler(cfg Config, factory schedulerRunnerFactory) (*Scheduler, error
 }
 
 var defaultSchedulerRunnerFactory = func(cfg Config) (schedulerRunner, error) {
-	redisClient, ownsClient, err := resolveRedisClient(cfg)
-	if err != nil {
-		return nil, err
+	// 复用外部共享客户端：走 NewSchedulerFromRedisClient，连接生命周期由调用方负责，
+	// asynqx 不会关闭它。
+	if !isNilInterface(cfg.RedisClient) {
+		if cfg.PingOnStart {
+			err := pingRedisOnStart(context.Background(), cfg.RedisClient, cfg.PingTimeout)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		runner := asynq.NewSchedulerFromRedisClient(cfg.RedisClient, cfg.schedulerOptions())
+		if runner == nil {
+			return nil, invalidConfigurationError("scheduler.runner", "must not be nil")
+		}
+
+		return &managedSchedulerRunner{runner: runner}, nil
 	}
 
+	// 由 asynqx 按连接参数创建：交给 asynq.NewScheduler 自建并在 Shutdown 时干净关闭其
+	// 内部客户端。asynq 的 Scheduler.Shutdown 不像 Server.Shutdown 那样对共享连接做保护，
+	// 若改用 NewSchedulerFromRedisClient，每次关闭都会触发 "redis connection is shared"
+	// 错误日志；此路径可彻底避免该噪音。
 	if cfg.PingOnStart {
-		err = pingRedisOnStart(context.Background(), redisClient, cfg.PingTimeout)
+		err := pingRedisOptionOnStart(context.Background(), cfg.Redis, cfg.PingTimeout)
 		if err != nil {
-			if ownsClient {
-				_ = redisClient.Close()
-			}
-
 			return nil, err
 		}
 	}
 
-	runner := asynq.NewSchedulerFromRedisClient(redisClient, cfg.schedulerOptions())
+	runner := asynq.NewScheduler(cfg.Redis, cfg.schedulerOptions())
 	if runner == nil {
-		if ownsClient {
-			closeErr := redisClient.Close()
-			if closeErr != nil {
-				return nil, invalidConfigurationError("scheduler.runner", closeErr.Error())
-			}
-		}
-
 		return nil, invalidConfigurationError("scheduler.runner", "must not be nil")
 	}
 
-	return &managedSchedulerRunner{runner: runner, redisClient: redisClient, ownsClient: ownsClient}, nil
+	return &managedSchedulerRunner{runner: runner}, nil
 }
 
 type managedSchedulerRunner struct {
-	runner      *asynq.Scheduler
-	redisClient redis.UniversalClient
-	ownsClient  bool
-	closeOnce   sync.Once
+	runner    *asynq.Scheduler
+	closeOnce sync.Once
 }
 
 func (r *managedSchedulerRunner) Register(spec string, task *asynq.Task, opts ...asynq.Option) (string, error) {
@@ -139,13 +142,9 @@ func (r *managedSchedulerRunner) Start() error {
 }
 
 func (r *managedSchedulerRunner) Shutdown() {
-	r.closeOnce.Do(func() {
-		r.runner.Shutdown()
-
-		if r.ownsClient {
-			_ = r.redisClient.Close()
-		}
-	})
+	// 底层客户端不由 managedSchedulerRunner 关闭：外部共享客户端由调用方负责，
+	// asynqx 自建的客户端由 asynq.Scheduler 在其 Shutdown 中自行关闭。
+	r.closeOnce.Do(r.runner.Shutdown)
 }
 
 // Register 注册一个周期任务，并返回底层调度器生成的 entryID。

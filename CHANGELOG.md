@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.3.1 - 2026-06-14
+
+### Changed
+
+- 依赖升级：`github.com/gtkit/json` v0.2.11 → `github.com/gtkit/json/v2` v2.0.7，导入路径随之改为 `github.com/gtkit/json/v2`。v2 默认后端仍为 `encoding/json`，序列化行为保持一致；可通过 `sonic` / `go_json` / `jsoniter` 构建标签切换后端，本包已在四种后端下交叉验证通过。
+- 依赖升级：`github.com/redis/go-redis/v9` v9.18.0 → v9.20.1，间接依赖 `github.com/rogpeppe/go-internal` → v1.15.0；go.mod 内其余依赖均为最新兼容版。配合 Go 工具链升级至 1.26.4，`govulncheck ./...` 报告无漏洞。
+- `Producer.Enqueue` 在 `ctx` 已取消时提前返回 `ctx` 错误，与 `Scheduler.Register` 行为保持一致，避免无谓的 payload 序列化与在途计数占用。
+
+### Fixed
+
+- 修复复用外部共享客户端（`WithRedisInstance`）时 `Producer.Close` / `Producer.Shutdown` 返回 asynq "redis connection is shared" 错误的问题。外部客户端的生命周期由调用方负责，asynqx 不再对其调用 `Close`，关闭返回 `nil`。
+- 消除 `Scheduler` 关闭时的误导性错误日志：asynqx 自建客户端时改用 `asynq.NewScheduler`（由 asynq 自行干净关闭其内部连接），不再触发 asynq 在 `Scheduler.Shutdown` 中记录的 "Failed to close redis client connection: redis connection is shared"。注：复用外部客户端时该日志由 asynq 内部产生，无法在本包层面消除。
+
+### Added
+
+- 新增 `InspectorOption`（`ConfigOption` 的别名），与 `ProducerOption` / `WorkerOption` / `SchedulerOption` 命名保持一致；`NewInspector` 的 GoDoc 补充了外部共享客户端下 `Close` 行为的说明。
+
 ## v1.3.0 - 2026-06-03
 
 ### Added

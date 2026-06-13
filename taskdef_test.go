@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/gtkit/json"
+	"github.com/gtkit/json/v2"
 	"github.com/hibiken/asynq"
 )
 
