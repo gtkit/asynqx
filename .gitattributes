@@ -1,0 +1,9 @@
+# 仓库统一使用 LF 行尾，避免 Windows CRLF 工作副本触发 golangci-lint(gci)/gofmt 等误报。
+* text=auto eol=lf
+
+*.go    text eol=lf
+go.mod  text eol=lf
+go.sum  text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf

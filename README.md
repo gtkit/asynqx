@@ -83,6 +83,8 @@ if err := app.Run(ctx); err != nil {
 `App` 同时实现 `Enqueuer` / `Registrar` / `PeriodicRegistrar`，因此 `TaskType` 的 `Enqueue` / `Handle` / `Register` 既能传 `App`，也能传细粒度的 `Producer` / `Worker` / `Scheduler`（向后兼容）。需要底层组件时用 `app.Producer()` / `app.Worker()` / `app.Scheduler()` / `app.Inspector()`。
 
 > `App` 让所有组件共享一个连接池，因此 `Scheduler` 关闭时 asynq 会打印一条无害的 `redis connection is shared` 日志（连接由 `App` 统一关闭）。
+>
+> Worker 并发较高时，建议用 `WithRedisPoolSize` 把连接池设为不小于 `Concurrency`（再留若干余量），避免消费与投递争抢同一连接池。
 
 下面的细粒度构造器（`NewProducer` / `NewWorker` / …）适合需要单独管理各组件的进阶场景。
 
