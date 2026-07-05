@@ -4,28 +4,17 @@ import (
 	"context"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/hibiken/asynq"
 )
 
-const (
-	schedulerStateIdle int32 = iota
-	schedulerStateStarting
-	schedulerStateRunning
-	schedulerStateStopping
-	schedulerStateStopped
-)
-
 // Scheduler 负责管理周期任务的注册、启动与关闭生命周期。
 type Scheduler struct {
+	lifecycle
+
 	cfg              Config
 	runner           schedulerRunner
-	state            atomic.Int32
 	activeOperations activityCounter
-	stopped          chan struct{}
-	stoppedOnce      sync.Once
-	stopOnce         sync.Once
 }
 
 type schedulerRunner interface {
@@ -79,9 +68,12 @@ func newScheduler(cfg Config, factory schedulerRunnerFactory) (*Scheduler, error
 		cfg:              cfg.clone(),
 		runner:           runner,
 		activeOperations: newActivityCounter(),
-		stopped:          make(chan struct{}),
 	}
-	scheduler.state.Store(schedulerStateIdle)
+	scheduler.init(ErrSchedulerAlreadyRunning, ErrSchedulerStopped, func() {
+		// 先等待在途的 Register/Unregister 完成，再关闭底层调度器。
+		scheduler.activeOperations.Wait()
+		scheduler.runner.Shutdown()
+	})
 
 	return scheduler, nil
 }
@@ -252,41 +244,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		return err
 	}
 
-	if !s.state.CompareAndSwap(schedulerStateIdle, schedulerStateStarting) {
-		switch s.state.Load() {
-		case schedulerStateStopping, schedulerStateStopped:
-			return ErrSchedulerStopped
-		default:
-			return ErrSchedulerAlreadyRunning
-		}
-	}
-
-	err = s.runner.Start()
-	if err != nil {
-		if s.state.CompareAndSwap(schedulerStateStarting, schedulerStateIdle) {
-			return err
-		}
-
-		if s.state.Load() == schedulerStateStopping {
-			s.beginStop(false)
-
-			return ErrSchedulerStopped
-		}
-
-		return err
-	}
-
-	if s.state.CompareAndSwap(schedulerStateStarting, schedulerStateRunning) {
-		return nil
-	}
-
-	if s.state.Load() == schedulerStateStopping {
-		s.beginStop(false)
-
-		return ErrSchedulerStopped
-	}
-
-	return nil
+	return s.start(s.runner.Start)
 }
 
 // Run 启动调度器，并在 ctx 取消后触发 Shutdown。
@@ -324,33 +282,12 @@ func (s *Scheduler) Shutdown(ctx context.Context) error {
 		ctx = context.Background()
 	}
 
-	for {
-		switch s.state.Load() {
-		case schedulerStateIdle:
-			if s.state.CompareAndSwap(schedulerStateIdle, schedulerStateStopping) {
-				s.beginStop(false)
-
-				return nil
-			}
-		case schedulerStateStarting:
-			if s.state.CompareAndSwap(schedulerStateStarting, schedulerStateStopping) {
-				return s.waitStopped(ctx)
-			}
-		case schedulerStateRunning:
-			if s.state.CompareAndSwap(schedulerStateRunning, schedulerStateStopping) {
-				s.beginStop(true)
-
-				return s.waitStopped(ctx)
-			}
-		case schedulerStateStopping, schedulerStateStopped:
-			return s.waitStopped(ctx)
-		}
-	}
+	return s.shutdown(ctx)
 }
 
 func (s *Scheduler) beginOperation() error {
 	switch s.state.Load() {
-	case schedulerStateIdle, schedulerStateStarting, schedulerStateRunning:
+	case stateIdle, stateStarting, stateRunning:
 	default:
 		return ErrSchedulerStopped
 	}
@@ -358,7 +295,7 @@ func (s *Scheduler) beginOperation() error {
 	s.activeOperations.Add()
 
 	switch s.state.Load() {
-	case schedulerStateIdle, schedulerStateStarting, schedulerStateRunning:
+	case stateIdle, stateStarting, stateRunning:
 		return nil
 	default:
 		s.activeOperations.Done()
@@ -369,40 +306,6 @@ func (s *Scheduler) beginOperation() error {
 
 func (s *Scheduler) endOperation() {
 	s.activeOperations.Done()
-}
-
-func (s *Scheduler) beginStop(async bool) {
-	s.stopOnce.Do(func() {
-		if async {
-			go s.finishStop()
-
-			return
-		}
-
-		s.finishStop()
-	})
-}
-
-func (s *Scheduler) finishStop() {
-	s.activeOperations.Wait()
-	s.runner.Shutdown()
-	s.state.Store(schedulerStateStopped)
-	s.stoppedOnce.Do(func() {
-		close(s.stopped)
-	})
-}
-
-func (s *Scheduler) waitStopped(ctx context.Context) error {
-	if s.state.Load() == schedulerStateStopped {
-		return nil
-	}
-
-	select {
-	case <-s.stopped:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 }
 
 func (s *Scheduler) shutdownContext() (context.Context, context.CancelFunc) {

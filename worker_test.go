@@ -349,7 +349,7 @@ func TestWorkerShutdownWhileStartWaitingForRegistrationsClosesRunner(t *testing.
 		startErr <- worker.Start(ctx)
 	}()
 
-	waitForWorkerState(t, worker, workerStateStarting)
+	waitForWorkerState(t, worker, stateStarting)
 
 	shutdownErr := make(chan error, 1)
 
@@ -357,7 +357,7 @@ func TestWorkerShutdownWhileStartWaitingForRegistrationsClosesRunner(t *testing.
 		shutdownErr <- worker.Shutdown(context.Background())
 	}()
 
-	waitForWorkerState(t, worker, workerStateStopping)
+	waitForWorkerState(t, worker, stateStopping)
 	cancel()
 	worker.endRegistration()
 
@@ -398,7 +398,7 @@ func TestWorkerShutdownWhileStartReturnsErrorClosesRunner(t *testing.T) {
 		shutdownErr <- worker.Shutdown(context.Background())
 	}()
 
-	waitForWorkerState(t, worker, workerStateStopping)
+	waitForWorkerState(t, worker, stateStopping)
 	close(runner.blockStart)
 
 	err := <-startErr

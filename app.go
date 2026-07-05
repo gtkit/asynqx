@@ -50,15 +50,49 @@ type App struct {
 	rdb     redis.UniversalClient
 	ownsRDB bool
 
+	// mu 仅保护组件的懒创建；创建完成后组件指针存入 atomic.Pointer，
+	// 读取（如每次 Enqueue）走无锁快路径，避免热路径上的锁竞争。
 	mu        sync.Mutex
-	producer  *Producer
-	worker    *Worker
-	scheduler *Scheduler
-	inspector *Inspector
+	producer  atomic.Pointer[Producer]
+	worker    atomic.Pointer[Worker]
+	scheduler atomic.Pointer[Scheduler]
+	inspector atomic.Pointer[Inspector]
 
 	closed    atomic.Bool
 	closeOnce sync.Once
 	closeErr  error
+}
+
+// lazyComponent 返回 slot 中已创建的组件；未创建时在 app.mu 保护下按共享配置创建一次。
+// 读路径无锁：已创建后仅做一次 atomic Load 与关闭标记检查。
+func lazyComponent[T any](app *App, slot *atomic.Pointer[T], create func(Config) (*T, error)) (*T, error) {
+	if app.closed.Load() {
+		return nil, ErrClosed
+	}
+
+	if component := slot.Load(); component != nil {
+		return component, nil
+	}
+
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	if app.closed.Load() {
+		return nil, ErrClosed
+	}
+
+	if component := slot.Load(); component != nil {
+		return component, nil
+	}
+
+	component, err := create(app.cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	slot.Store(component)
+
+	return component, nil
 }
 
 // New 基于共享配置创建 App：内部解析并持有一个共享的 Redis 连接池。
@@ -147,27 +181,7 @@ func (a *App) Producer() (*Producer, error) {
 		return nil, ErrClosed
 	}
 
-	if a.closed.Load() {
-		return nil, ErrClosed
-	}
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if a.closed.Load() {
-		return nil, ErrClosed
-	}
-
-	if a.producer == nil {
-		producer, err := NewProducerFromConfig(a.cfg)
-		if err != nil {
-			return nil, err
-		}
-
-		a.producer = producer
-	}
-
-	return a.producer, nil
+	return lazyComponent(a, &a.producer, NewProducerFromConfig)
 }
 
 // Worker 返回 App 内部的 Worker，首次调用时按共享配置懒创建。
@@ -176,27 +190,7 @@ func (a *App) Worker() (*Worker, error) {
 		return nil, ErrClosed
 	}
 
-	if a.closed.Load() {
-		return nil, ErrClosed
-	}
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if a.closed.Load() {
-		return nil, ErrClosed
-	}
-
-	if a.worker == nil {
-		worker, err := NewWorkerFromConfig(a.cfg)
-		if err != nil {
-			return nil, err
-		}
-
-		a.worker = worker
-	}
-
-	return a.worker, nil
+	return lazyComponent(a, &a.worker, NewWorkerFromConfig)
 }
 
 // Scheduler 返回 App 内部的 Scheduler，首次调用时按共享配置懒创建。
@@ -205,27 +199,7 @@ func (a *App) Scheduler() (*Scheduler, error) {
 		return nil, ErrClosed
 	}
 
-	if a.closed.Load() {
-		return nil, ErrClosed
-	}
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if a.closed.Load() {
-		return nil, ErrClosed
-	}
-
-	if a.scheduler == nil {
-		scheduler, err := NewSchedulerFromConfig(a.cfg)
-		if err != nil {
-			return nil, err
-		}
-
-		a.scheduler = scheduler
-	}
-
-	return a.scheduler, nil
+	return lazyComponent(a, &a.scheduler, NewSchedulerFromConfig)
 }
 
 // Inspector 返回 App 内部的 Inspector，首次调用时按共享配置懒创建。
@@ -234,31 +208,38 @@ func (a *App) Inspector() (*Inspector, error) {
 		return nil, ErrClosed
 	}
 
-	if a.closed.Load() {
-		return nil, ErrClosed
+	return lazyComponent(a, &a.inspector, NewInspectorFromConfig)
+}
+
+// Ping 探测 App 持有的共享 Redis 连接是否可用，适合用作就绪/存活探针。
+func (a *App) Ping(ctx context.Context) error {
+	if a == nil || a.closed.Load() {
+		return ErrClosed
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if a.closed.Load() {
-		return nil, ErrClosed
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	if a.inspector == nil {
-		inspector, err := NewInspectorFromConfig(a.cfg)
-		if err != nil {
-			return nil, err
-		}
+	return a.rdb.Ping(ctx).Err()
+}
 
-		a.inspector = inspector
+// Unregister 通过 App 内部的 Scheduler 按 entryID 移除已注册的周期任务，
+// 与 Register 对称（首次调用时懒创建 Scheduler）。
+func (a *App) Unregister(ctx context.Context, entryID string) error {
+	scheduler, err := a.Scheduler()
+	if err != nil {
+		return err
 	}
 
-	return a.inspector, nil
+	return scheduler.Unregister(ctx, entryID)
 }
 
 // Start 启动消费侧：已通过 Handle 注册处理器的 Worker 与已通过 Register 注册周期任务的
 // Scheduler（非阻塞）。两者都未注册时返回错误，以便尽早发现误用。
+//
+// 任一组件启动失败时会回滚已启动的组件，不会留下"半启动"状态在后台继续消费；
+// 返回错误后 App 的消费侧应视为不可用，调用方应 Close 后重建或退出进程。
 func (a *App) Start(ctx context.Context) error {
 	if a == nil {
 		return invalidArgumentError("app", "must not be nil")
@@ -268,9 +249,8 @@ func (a *App) Start(ctx context.Context) error {
 		return ErrClosed
 	}
 
-	a.mu.Lock()
-	worker, scheduler := a.worker, a.scheduler
-	a.mu.Unlock()
+	worker := a.worker.Load()
+	scheduler := a.scheduler.Load()
 
 	if worker == nil && scheduler == nil {
 		return invalidArgumentError("app", "Start/Run 前需先通过 Handle 注册处理器或通过 Register 注册周期任务")
@@ -286,7 +266,7 @@ func (a *App) Start(ctx context.Context) error {
 	if scheduler != nil {
 		err := scheduler.Start(ctx)
 		if err != nil {
-			return err
+			return a.rollbackWorker(worker, err)
 		}
 	}
 
@@ -338,8 +318,10 @@ func (a *App) Shutdown(ctx context.Context) error {
 	a.closeOnce.Do(func() {
 		a.closed.Store(true)
 
+		// closed 置位后再与懒创建互斥地读取组件指针：
+		// 拿到锁时要么组件已创建完成，要么懒创建路径会观察到 closed 而放弃创建。
 		a.mu.Lock()
-		producer, worker, scheduler := a.producer, a.worker, a.scheduler
+		producer, worker, scheduler := a.producer.Load(), a.worker.Load(), a.scheduler.Load()
 		a.mu.Unlock()
 
 		a.closeErr = a.shutdownComponents(ctx, worker, scheduler, producer)
@@ -358,6 +340,24 @@ func (a *App) Close() error {
 	defer cancel()
 
 	return a.Shutdown(ctx)
+}
+
+// rollbackWorker 在 Scheduler 启动失败后回滚已启动的 Worker，
+// 避免调用方拿到错误后 Worker 仍在后台消费；回滚失败时聚合两个错误返回。
+func (a *App) rollbackWorker(worker *Worker, startErr error) error {
+	if worker == nil {
+		return startErr
+	}
+
+	shutdownCtx, cancel := a.shutdownContext()
+	defer cancel()
+
+	rollbackErr := worker.Shutdown(shutdownCtx)
+	if rollbackErr != nil {
+		return errors.Join(startErr, rollbackErr)
+	}
+
+	return startErr
 }
 
 func (a *App) shutdownContext() (context.Context, context.CancelFunc) {

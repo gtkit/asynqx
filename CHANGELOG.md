@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.5.0 - 2026-07-06
+
+### Added
+
+- `TaskType` 支持默认投递选项：`NewTask[T](name, defaults ...TaskOption)` / `NewTaskType[T](name, defaults ...TaskOption)` 可在声明任务时一并绑定该任务固定的投递参数（队列、重试次数等），`Enqueue` / `Register` 时自动生效；调用时传入的选项在默认选项之后应用，按「后者覆盖前者」语义可覆盖默认值。现有单参数调用完全兼容。
+- 新增 `TaskType.MustHandle(registrar, handler)`：注册失败（重复注册、Worker 已启动等编程错误）时 panic，与 `http.Handle` 惯例一致，消除初始化阶段逐个 error 检查的样板。
+- 新增 `App.Ping(ctx)`：探测 App 持有的共享 Redis 连接，可直接用作就绪/存活探针，调用方无需另行持有 Redis 客户端。
+- 新增 `App.Unregister(ctx, entryID)`：与 `App.Register` 对称的周期任务取消转发。
+
+### Changed
+
+- `App` 组件懒创建改为 atomic 指针快路径：`Enqueue` 等热路径在组件创建完成后不再经过互斥锁，消除高并发投递下的锁竞争；首次创建仍由互斥锁保护，行为不变。
+- `Worker` 与 `Scheduler` 的启动/关闭状态机收敛为共享的内部 `lifecycle` 类型，消除约 150 行重复实现；对外行为与并发语义保持不变（原有全部状态机测试不改断言直接通过）。
+- 配置选项 GoDoc 标注了作用范围：`WithConcurrency` / `WithQueues` / `WithMiddleware` / `WithErrorHandler` / `WithGroup*` / `WithIsFailure` 等仅对 Worker 生效，`WithLocation` / `WithSchedulerPostEnqueueFunc` 仅对 Scheduler 生效，`WithDefaultTaskTimeout` 对 Producer 与 Scheduler 生效，避免误以为 `WithMiddleware` 能拦截投递。
+- `doc.go` 包文档重写为面向使用者的概述与最小示例（pkg.go.dev 首页）。
+- README：消费者快速开始改为含 `signal.NotifyContext` 信号处理的完整 `main` 示例；补充 TaskType 默认选项、`MustHandle`、`App.Ping` / `App.Unregister` 的用法与选项作用范围说明。
+
+### Fixed
+
+- `ErrClosed` 的错误文案从 `asynqx: producer closed` 修正为 `asynqx: closed`：该错误同时用于 App 及其全部组件关闭后的调用拒绝，原文案会把排障方向误导向 Producer。依赖 `errors.Is(err, ErrClosed)` 的调用不受影响；若有代码匹配错误字符串原文需同步调整。
+- `App.Start` 部分启动失败不再遗留"半启动"状态：Worker 启动成功而 Scheduler 启动失败时，会先回滚（停止）已启动的 Worker 再返回错误，避免调用方拿到错误后 Worker 仍在后台消费；回滚失败时以 `errors.Join` 聚合两个错误。
+
+### 注意事项
+
+- `TaskType[T]` 因新增默认选项字段而不再是可比较类型：极少数以 `==` 比较 `TaskType` 值或将其用作 map key 的代码需要改用 `Name()` 比较。常规的包级变量声明用法不受影响。
+
 ## v1.4.0 - 2026-06-14
 
 ### Added

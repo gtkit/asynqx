@@ -213,7 +213,7 @@ func WithRedisInstance(client redis.UniversalClient) ConfigOption {
 	}
 }
 
-// WithConcurrency 设置共享配置中的并发数。
+// WithConcurrency 设置共享配置中的并发数。仅对 Worker 生效。
 func WithConcurrency(concurrency int) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.Concurrency = concurrency
@@ -222,7 +222,8 @@ func WithConcurrency(concurrency int) ConfigOption {
 	}
 }
 
-// WithQueues 设置共享配置中的队列权重，并复制底层 map。
+// WithQueues 设置共享配置中的队列权重，并复制底层 map。仅对 Worker（消费侧）生效；
+// 投递到指定队列请使用任务选项 WithTaskQueue。
 func WithQueues(queues map[string]int) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.Queues = copyQueueWeights(queues)
@@ -231,7 +232,7 @@ func WithQueues(queues map[string]int) ConfigOption {
 	}
 }
 
-// WithRetryDelayFunc 设置共享配置中的重试延迟函数。
+// WithRetryDelayFunc 设置共享配置中的重试延迟函数。仅对 Worker 生效。
 func WithRetryDelayFunc(fn asynq.RetryDelayFunc) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.RetryDelayFunc = fn
@@ -240,7 +241,7 @@ func WithRetryDelayFunc(fn asynq.RetryDelayFunc) ConfigOption {
 	}
 }
 
-// WithStrictPriority 设置共享配置中的严格优先级。
+// WithStrictPriority 设置共享配置中的严格优先级。仅对 Worker 生效。
 func WithStrictPriority(val bool) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.StrictPriority = val
@@ -249,7 +250,7 @@ func WithStrictPriority(val bool) ConfigOption {
 	}
 }
 
-// WithErrorHandler 设置共享配置中的错误处理器。
+// WithErrorHandler 设置共享配置中的错误处理器。仅对 Worker 生效。
 func WithErrorHandler(fn asynq.ErrorHandler) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.ErrorHandler = fn
@@ -258,7 +259,7 @@ func WithErrorHandler(fn asynq.ErrorHandler) ConfigOption {
 	}
 }
 
-// WithHealthCheckFunc 设置共享配置中的健康检查回调。
+// WithHealthCheckFunc 设置共享配置中的健康检查回调。仅对 Worker 生效。
 func WithHealthCheckFunc(fn func(error)) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.HealthCheckFunc = fn
@@ -267,7 +268,7 @@ func WithHealthCheckFunc(fn func(error)) ConfigOption {
 	}
 }
 
-// WithHealthCheckInterval 设置共享配置中的健康检查间隔。
+// WithHealthCheckInterval 设置共享配置中的健康检查间隔。仅对 Worker 生效。
 func WithHealthCheckInterval(interval time.Duration) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.HealthCheckInterval = interval
@@ -285,7 +286,7 @@ func WithShutdownTimeout(timeout time.Duration) ConfigOption {
 	}
 }
 
-// WithDelayedTaskCheckInterval 设置共享配置中的延迟任务检查间隔。
+// WithDelayedTaskCheckInterval 设置共享配置中的延迟任务检查间隔。仅对 Worker 生效。
 func WithDelayedTaskCheckInterval(interval time.Duration) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.DelayedTaskCheckInterval = interval
@@ -294,7 +295,7 @@ func WithDelayedTaskCheckInterval(interval time.Duration) ConfigOption {
 	}
 }
 
-// WithGroupGracePeriod 设置共享配置中的聚合宽限期。
+// WithGroupGracePeriod 设置共享配置中的聚合宽限期。仅对 Worker 生效。
 func WithGroupGracePeriod(interval time.Duration) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.GroupGracePeriod = interval
@@ -303,7 +304,7 @@ func WithGroupGracePeriod(interval time.Duration) ConfigOption {
 	}
 }
 
-// WithGroupMaxDelay 设置共享配置中的聚合最大延迟。
+// WithGroupMaxDelay 设置共享配置中的聚合最大延迟。仅对 Worker 生效。
 func WithGroupMaxDelay(interval time.Duration) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.GroupMaxDelay = interval
@@ -312,7 +313,7 @@ func WithGroupMaxDelay(interval time.Duration) ConfigOption {
 	}
 }
 
-// WithGroupMaxSize 设置共享配置中的聚合最大尺寸。
+// WithGroupMaxSize 设置共享配置中的聚合最大尺寸。仅对 Worker 生效。
 func WithGroupMaxSize(size int) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.GroupMaxSize = size
@@ -321,7 +322,7 @@ func WithGroupMaxSize(size int) ConfigOption {
 	}
 }
 
-// WithGroupAggregator 设置任务聚合器。
+// WithGroupAggregator 设置任务聚合器。仅对 Worker 生效。
 // 任务聚合（WithTaskGroup 投递的分组任务）必须配置聚合器才会真正生效：
 // 未设置时 asynq 不会启动聚合协程，分组任务将滞留在 group 中不被处理。
 func WithGroupAggregator(aggregator asynq.GroupAggregator) ConfigOption {
@@ -336,7 +337,8 @@ func WithGroupAggregator(aggregator asynq.GroupAggregator) ConfigOption {
 	}
 }
 
-// WithMiddleware 设置共享配置中的中间件。
+// WithMiddleware 设置共享配置中的中间件。仅对 Worker（消费侧处理链）生效，
+// 不拦截 Producer 的投递调用。
 func WithMiddleware(middlewares ...asynq.MiddlewareFunc) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.Middleware = append([]asynq.MiddlewareFunc(nil), middlewares...)
@@ -345,7 +347,7 @@ func WithMiddleware(middlewares ...asynq.MiddlewareFunc) ConfigOption {
 	}
 }
 
-// WithLocation 设置共享配置中的时区位置。
+// WithLocation 设置共享配置中的时区位置。仅对 Scheduler（cron 解析）生效。
 func WithLocation(name string) ConfigOption {
 	return func(cfg *Config) error {
 		if strings.TrimSpace(name) == "" {
@@ -363,7 +365,7 @@ func WithLocation(name string) ConfigOption {
 	}
 }
 
-// WithIsFailure 设置共享配置中的失败判定函数。
+// WithIsFailure 设置共享配置中的失败判定函数。仅对 Worker 生效。
 func WithIsFailure(fn func(error) bool) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.IsFailure = fn
@@ -373,6 +375,7 @@ func WithIsFailure(fn func(error) bool) ConfigOption {
 }
 
 // WithDefaultTaskTimeout 设置共享配置中的默认任务超时时间。
+// 对 Producer 与 Scheduler 生效：投递/注册时未显式指定超时或截止时间则自动注入；传入 0 表示不注入。
 func WithDefaultTaskTimeout(timeout time.Duration) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.TaskTimeout = timeout
@@ -381,7 +384,7 @@ func WithDefaultTaskTimeout(timeout time.Duration) ConfigOption {
 	}
 }
 
-// WithLogger 设置共享配置中的日志实现。
+// WithLogger 设置共享配置中的日志实现。对 Worker 与 Scheduler 生效。
 func WithLogger(log Logger) ConfigOption {
 	return func(cfg *Config) error {
 		cfg.Logger = log

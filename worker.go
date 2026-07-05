@@ -5,32 +5,21 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/gtkit/json/v2"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 )
 
-const (
-	workerStateIdle int32 = iota
-	workerStateStarting
-	workerStateRunning
-	workerStateStopping
-	workerStateStopped
-)
-
 // Worker 负责消费 asynq 任务并管理处理器注册与运行生命周期。
 type Worker struct {
+	lifecycle
+
 	cfg           Config
 	mux           *asynq.ServeMux
 	runner        workerRunner
 	handlers      sync.Map
 	registrations activityCounter
-	state         atomic.Int32
-	stopped       chan struct{}
-	stoppedOnce   sync.Once
-	stopOnce      sync.Once
 }
 
 type workerRunner interface {
@@ -88,9 +77,8 @@ func newWorker(cfg Config, factory workerRunnerFactory) (*Worker, error) {
 		mux:           mux,
 		runner:        runner,
 		registrations: newActivityCounter(),
-		stopped:       make(chan struct{}),
 	}
-	worker.state.Store(workerStateIdle)
+	worker.init(ErrWorkerAlreadyRunning, ErrWorkerStopped, worker.runner.Shutdown)
 
 	return worker, nil
 }
@@ -215,58 +203,17 @@ func (w *Worker) Start(ctx context.Context) error {
 		return err
 	}
 
-	if !w.state.CompareAndSwap(workerStateIdle, workerStateStarting) {
-		switch w.state.Load() {
-		case workerStateStopped, workerStateStopping:
-			return ErrWorkerStopped
-		default:
-			return ErrWorkerAlreadyRunning
-		}
-	}
+	return w.start(
+		func() error {
+			// 等待在途的处理器注册完成，再确认 ctx 是否仍有效。
+			w.registrations.Wait()
 
-	w.registrations.Wait()
-
-	err = ctx.Err()
-	if err != nil {
-		if w.state.CompareAndSwap(workerStateStarting, workerStateIdle) {
-			return err
-		}
-
-		if w.state.Load() == workerStateStopping {
-			w.beginStop(false)
-
-			return ErrWorkerStopped
-		}
-
-		return err
-	}
-
-	err = w.runner.Start(w.mux)
-	if err != nil {
-		if w.state.CompareAndSwap(workerStateStarting, workerStateIdle) {
-			return err
-		}
-
-		if w.state.Load() == workerStateStopping {
-			w.beginStop(false)
-
-			return ErrWorkerStopped
-		}
-
-		return err
-	}
-
-	if w.state.CompareAndSwap(workerStateStarting, workerStateRunning) {
-		return nil
-	}
-
-	if w.state.Load() == workerStateStopping {
-		w.beginStop(false)
-
-		return ErrWorkerStopped
-	}
-
-	return nil
+			return ctx.Err()
+		},
+		func() error {
+			return w.runner.Start(w.mux)
+		},
+	)
 }
 
 // Run 启动 Worker，并在 ctx 取消后触发 Shutdown。
@@ -304,35 +251,14 @@ func (w *Worker) Shutdown(ctx context.Context) error {
 		ctx = context.Background()
 	}
 
-	for {
-		switch w.state.Load() {
-		case workerStateIdle:
-			if w.state.CompareAndSwap(workerStateIdle, workerStateStopping) {
-				w.beginStop(false)
-
-				return nil
-			}
-		case workerStateStarting:
-			if w.state.CompareAndSwap(workerStateStarting, workerStateStopping) {
-				return w.waitStopped(ctx)
-			}
-		case workerStateRunning:
-			if w.state.CompareAndSwap(workerStateRunning, workerStateStopping) {
-				w.beginStop(true)
-
-				return w.waitStopped(ctx)
-			}
-		case workerStateStopping, workerStateStopped:
-			return w.waitStopped(ctx)
-		}
-	}
+	return w.shutdown(ctx)
 }
 
 func (w *Worker) beginRegistration() error {
 	switch w.state.Load() {
-	case workerStateStopping, workerStateStopped:
+	case stateStopping, stateStopped:
 		return ErrWorkerStopped
-	case workerStateIdle:
+	case stateIdle:
 	default:
 		return ErrWorkerAlreadyRunning
 	}
@@ -340,11 +266,11 @@ func (w *Worker) beginRegistration() error {
 	w.registrations.Add()
 
 	switch w.state.Load() {
-	case workerStateStopping, workerStateStopped:
+	case stateStopping, stateStopped:
 		w.registrations.Done()
 
 		return ErrWorkerStopped
-	case workerStateIdle:
+	case stateIdle:
 		return nil
 	default:
 		w.registrations.Done()
@@ -355,43 +281,6 @@ func (w *Worker) beginRegistration() error {
 
 func (w *Worker) endRegistration() {
 	w.registrations.Done()
-}
-
-func (w *Worker) beginStop(async bool) {
-	w.stopOnce.Do(func() {
-		if async {
-			go w.finishStop()
-
-			return
-		}
-
-		w.finishStop()
-	})
-}
-
-func (w *Worker) finishStop() {
-	w.runner.Shutdown()
-	w.markStopped()
-}
-
-func (w *Worker) markStopped() {
-	w.state.Store(workerStateStopped)
-	w.stoppedOnce.Do(func() {
-		close(w.stopped)
-	})
-}
-
-func (w *Worker) waitStopped(ctx context.Context) error {
-	if w.state.Load() == workerStateStopped {
-		return nil
-	}
-
-	select {
-	case <-w.stopped:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 }
 
 func (w *Worker) shutdownContext() (context.Context, context.CancelFunc) {

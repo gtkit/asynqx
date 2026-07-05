@@ -110,3 +110,105 @@ func TestTaskTypeRegisterUsesBoundType(t *testing.T) {
 		t.Fatalf("expected task type %q, got %q", "email:welcome", runner.registeredTask.Type())
 	}
 }
+
+func TestTaskTypeDefaultOptionsApplied(t *testing.T) {
+	client := &stubProducerClient{}
+
+	producer, err := newProducer(defaultConfig(), func(Config) (producerClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected producer error: %v", err)
+	}
+
+	def := NewTask[workerTestPayload]("email:welcome", WithTaskQueue("low"), WithTaskMaxRetry(3))
+
+	if _, err = def.Enqueue(context.Background(), producer, workerTestPayload{Name: "alice"}); err != nil {
+		t.Fatalf("unexpected enqueue error: %v", err)
+	}
+
+	// 默认选项 queue/max_retry + defaultConfig 注入的默认超时。
+	if len(client.lastOpts) != 3 {
+		t.Fatalf("expected 3 task options, got %d", len(client.lastOpts))
+	}
+
+	assertAsynqOption(t, client.lastOpts[0], asynq.QueueOpt, "low")
+	assertAsynqOption(t, client.lastOpts[1], asynq.MaxRetryOpt, 3)
+	assertAsynqOption(t, client.lastOpts[2], asynq.TimeoutOpt, defaultTaskTimeout)
+}
+
+func TestTaskTypeCallSiteOptionsOverrideDefaults(t *testing.T) {
+	client := &stubProducerClient{}
+
+	producer, err := newProducer(defaultConfig(), func(Config) (producerClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected producer error: %v", err)
+	}
+
+	def := NewTask[workerTestPayload]("email:welcome", WithTaskQueue("low"))
+
+	if _, err = def.Enqueue(
+		context.Background(),
+		producer,
+		workerTestPayload{Name: "alice"},
+		WithTaskQueue("high"),
+	); err != nil {
+		t.Fatalf("unexpected enqueue error: %v", err)
+	}
+
+	// 后应用的调用时选项覆盖默认选项，最终只产生一个 queue 选项。
+	if len(client.lastOpts) != 2 {
+		t.Fatalf("expected 2 task options, got %d", len(client.lastOpts))
+	}
+
+	assertAsynqOption(t, client.lastOpts[0], asynq.QueueOpt, "high")
+	assertAsynqOption(t, client.lastOpts[1], asynq.TimeoutOpt, defaultTaskTimeout)
+}
+
+func TestTaskTypeRegisterAppliesDefaultOptions(t *testing.T) {
+	runner := &stubSchedulerRunner{}
+	scheduler := newTestScheduler(t, runner)
+
+	def := NewTask[workerTestPayload]("email:welcome", WithTaskQueue("low"))
+
+	if _, err := def.Register(
+		context.Background(), scheduler, "@every 1m", workerTestPayload{Name: "alice"},
+	); err != nil {
+		t.Fatalf("unexpected register error: %v", err)
+	}
+
+	if len(runner.registeredOpts) != 2 {
+		t.Fatalf("expected 2 task options, got %d", len(runner.registeredOpts))
+	}
+
+	if got := runner.registeredOpts[0].Value(); got != "low" {
+		t.Fatalf("expected default queue option value %q, got %v", "low", got)
+	}
+}
+
+func TestTaskTypeMustHandleRegistersHandler(t *testing.T) {
+	worker := newTestWorker(t, &stubWorkerRunner{})
+
+	def := NewTask[workerTestPayload]("email:welcome")
+	def.MustHandle(worker, func(context.Context, workerTestPayload) error { return nil })
+
+	if _, loaded := worker.handlers.Load("email:welcome"); !loaded {
+		t.Fatal("expected handler to be registered")
+	}
+}
+
+func TestTaskTypeMustHandlePanicsOnError(t *testing.T) {
+	worker := newTestWorker(t, &stubWorkerRunner{})
+
+	def := NewTask[workerTestPayload]("email:welcome")
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected MustHandle to panic on nil handler")
+		}
+	}()
+
+	def.MustHandle(worker, nil)
+}

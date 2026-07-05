@@ -201,8 +201,7 @@ func isNilInterface(v any) bool {
 
 	kind := value.Kind()
 	if kind == reflect.Chan || kind == reflect.Func || kind == reflect.Map ||
-		kind == reflect.Pointer || kind == reflect.Slice || kind == reflect.Interface ||
-		kind == reflect.UnsafePointer {
+		kind == reflect.Pointer || kind == reflect.Slice || kind == reflect.UnsafePointer {
 		return value.IsNil()
 	}
 

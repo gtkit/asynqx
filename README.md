@@ -48,8 +48,12 @@ go get github.com/gtkit/asynqx
 `App` 是最省心的入口：写一份配置，内部共享同一个 Redis 连接池，按需提供投递 / 消费 / 调度 / 检查能力。配合 `TaskType[T]`，做到类型安全、业务代码零 asynq 依赖。
 
 ```go
-// 任务定义：单一事实来源，投递端与消费端共用
-var WelcomeEmail = asynqx.NewTask[EmailPayload]("email:welcome")
+// 任务定义：单一事实来源，投递端与消费端共用。
+// 该任务固定的投递参数（队列、重试次数等）可作为默认选项一并声明，调用处不再重复传递。
+var WelcomeEmail = asynqx.NewTask[EmailPayload]("email:welcome",
+	asynqx.WithTaskQueue("critical"),
+	asynqx.WithTaskMaxRetry(5),
+)
 
 // 生产者
 app, err := asynqx.New(asynqx.WithRedisAddr("127.0.0.1:6379"))
@@ -58,27 +62,38 @@ if err != nil {
 }
 defer app.Close()
 
+// 默认选项自动生效；调用时传入的选项可覆盖默认值
 _, _ = WelcomeEmail.Enqueue(context.Background(), app, EmailPayload{UserID: "u-1001"})
 ```
 
 ```go
-// 消费者（同样一份配置写法）
-app, err := asynqx.New(asynqx.WithRedisAddr("127.0.0.1:6379"))
-if err != nil {
-	log.Fatal(err)
-}
+// 消费者：完整 main 函数（信号处理 + 优雅关闭）
+func main() {
+	// SIGINT / SIGTERM 触发 ctx 取消，app.Run 随之优雅关闭
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-// 注册必须在 Run 之前；handler 只见 payload，零 asynq 依赖
-_ = WelcomeEmail.Handle(app, func(ctx context.Context, p EmailPayload) error {
-	// 纯业务逻辑；需要元信息时用 asynqx.RetryCount(ctx) / asynqx.TaskID(ctx) 等
-	return nil
-})
+	app, err := asynqx.New(asynqx.WithRedisAddr("127.0.0.1:6379"))
+	if err != nil {
+		log.Fatal(err)
+	}
 
-// 启动消费、阻塞至 ctx 取消、优雅关闭全部组件与连接
-if err := app.Run(ctx); err != nil {
-	log.Fatal(err)
+	// 注册必须在 Run 之前；handler 只见 payload，零 asynq 依赖。
+	// MustHandle 在注册失败（重复注册等编程错误）时 panic，适合初始化阶段，
+	// 与 http.Handle 惯例一致；也可用 Handle 自行处理 error。
+	WelcomeEmail.MustHandle(app, func(ctx context.Context, p EmailPayload) error {
+		// 纯业务逻辑；需要元信息时用 asynqx.RetryCount(ctx) / asynqx.TaskID(ctx) 等
+		return nil
+	})
+
+	// 启动消费、阻塞至 ctx 取消、优雅关闭全部组件与连接
+	if err := app.Run(ctx); err != nil {
+		log.Fatal(err)
+	}
 }
 ```
+
+就绪/存活探针可直接用 `app.Ping(ctx)` 探测共享 Redis 连接，无需另行持有 Redis 客户端。
 
 `App` 同时实现 `Enqueuer` / `Registrar` / `PeriodicRegistrar`，因此 `TaskType` 的 `Enqueue` / `Handle` / `Register` 既能传 `App`，也能传细粒度的 `Producer` / `Worker` / `Scheduler`（向后兼容）。需要底层组件时用 `app.Producer()` / `app.Worker()` / `app.Scheduler()` / `app.Inspector()`。
 
@@ -354,6 +369,8 @@ func main() {
 
 需要多个组件复用同一组配置时，可以先构造 `Config`，再传给 `NewProducerFromConfig`、`NewWorkerFromConfig`、`NewSchedulerFromConfig` 或 `NewInspectorFromConfig`。这些构造器会重新复制并校验配置，调用方后续修改原始变量不会影响已经创建的组件。
 
+> 部分选项只对特定角色生效：`WithConcurrency` / `WithQueues` / `WithMiddleware` / `WithErrorHandler` 等仅作用于 Worker（消费侧），`WithLocation` / `WithSchedulerPostEnqueueFunc` 仅作用于 Scheduler。每个选项的作用范围已在其 GoDoc 中标注。
+
 ### 重试退避策略
 
 asynq 默认的重试退避已是指数退避加抖动，但延迟随重试次数无上限增长（默认最多 25 次重试时末次延迟可达数天）。
@@ -563,15 +580,26 @@ err := worker.HandleRaw("user:created", func(ctx context.Context, task *asynq.Ta
 类型写错或 payload 类型不匹配会直接编译不过：
 
 ```go
-// 集中声明所有任务类型
-var WelcomeEmail = asynqx.NewTaskType[EmailPayload]("email:welcome")
+// 集中声明所有任务类型；该任务固定的投递参数可作为默认选项一并声明
+var WelcomeEmail = asynqx.NewTaskType[EmailPayload]("email:welcome",
+	asynqx.WithTaskQueue("critical"),
+	asynqx.WithTaskMaxRetry(5),
+)
 
-// 投递：payload 必须是 EmailPayload，否则编译失败
-_, err := WelcomeEmail.Enqueue(ctx, producer, EmailPayload{UserID: "u-1001"},
-	asynqx.WithTaskQueue("critical"))
+// 投递：payload 必须是 EmailPayload，否则编译失败；默认选项自动生效
+_, err := WelcomeEmail.Enqueue(ctx, producer, EmailPayload{UserID: "u-1001"})
+
+// 调用时传入的选项在默认选项之后应用，可覆盖默认值（本次投递改走 low 队列）
+_, err = WelcomeEmail.Enqueue(ctx, producer, EmailPayload{UserID: "u-1002"},
+	asynqx.WithTaskQueue("low"))
 
 // 消费：handler 直接拿到解码后的 EmailPayload
 err = WelcomeEmail.Handle(worker, func(ctx context.Context, p EmailPayload) error {
+	return nil
+})
+
+// 初始化阶段也可用 MustHandle 消除逐个 error 检查（注册失败即 panic，同 http.Handle 惯例）
+WelcomeEmail.MustHandle(worker, func(ctx context.Context, p EmailPayload) error {
 	return nil
 })
 
@@ -620,6 +648,9 @@ entryID, err := scheduler.Register(
 
 ```go
 err := scheduler.Unregister(context.Background(), entryID)
+
+// 使用 App 时可直接调用同名转发方法，与 Register 对称
+err = app.Unregister(context.Background(), entryID)
 ```
 
 ## 错误说明
@@ -665,6 +696,7 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 - 默认 `ShutdownTimeout` 是 `30s`
 - `WithShutdownTimeout(0)` 表示不额外设置默认关闭超时，内部会使用 `context.Background()`
 - 如果 `Run(ctx)` 因 `ctx` 取消而触发停机且关闭成功，返回值是 `nil`；调用方需要区分退出原因时，应在外层读取传入的 `ctx.Err()`
+- `App.Start` 中任一组件启动失败时会回滚已启动的组件（如 Worker 已启动而 Scheduler 启动失败，则先停掉 Worker 再返回错误），不会留下"半启动"状态；返回错误后消费侧应视为不可用，建议 `Close` 后重建或退出进程
 
 ### Producer
 
