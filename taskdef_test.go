@@ -2,6 +2,7 @@ package asynqx
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 
@@ -211,4 +212,33 @@ func TestTaskTypeMustHandlePanicsOnError(t *testing.T) {
 	}()
 
 	def.MustHandle(worker, nil)
+}
+
+func TestTaskTypeEnqueueRejectsNilEnqueuer(t *testing.T) {
+	def := NewTask[workerTestPayload]("email:welcome")
+
+	_, err := def.Enqueue(context.Background(), nil, workerTestPayload{Name: "alice"})
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument for nil enqueuer, got %v", err)
+	}
+
+	// typed-nil 接口同样必须被拦下，不允许 panic。
+	_, err = def.Enqueue(context.Background(), (*Producer)(nil), workerTestPayload{Name: "alice"})
+	if err == nil {
+		t.Fatal("expected error for typed-nil enqueuer")
+	}
+}
+
+func TestTaskTypeRegisterRejectsNilRegistrar(t *testing.T) {
+	def := NewTask[workerTestPayload]("email:welcome")
+
+	_, err := def.Register(context.Background(), nil, "@every 1m", workerTestPayload{Name: "alice"})
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument for nil registrar, got %v", err)
+	}
+
+	_, err = def.Register(context.Background(), (*Scheduler)(nil), "@every 1m", workerTestPayload{Name: "alice"})
+	if err == nil {
+		t.Fatal("expected error for typed-nil registrar")
+	}
 }

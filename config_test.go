@@ -501,3 +501,39 @@ func TestNewConfigAppliesSchedulerPostEnqueueFunc(t *testing.T) {
 		t.Fatal("expected configured post enqueue func to be wired through")
 	}
 }
+
+func TestNewConfigRejectsTypedNilErrorHandler(t *testing.T) {
+	_, err := NewConfig(WithErrorHandler((asynq.ErrorHandlerFunc)(nil)))
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration for typed-nil error handler, got %v", err)
+	}
+}
+
+func TestNewConfigRejectsTypedNilLogger(t *testing.T) {
+	_, err := NewConfig(WithLogger((*recordingLogger)(nil)))
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration for typed-nil logger, got %v", err)
+	}
+}
+
+func TestNewConfigAllowsUntypedNilInterfaceOptions(t *testing.T) {
+	cfg, err := NewConfig(WithErrorHandler(nil), WithLogger(nil))
+	if err != nil {
+		t.Fatalf("unexpected error for untyped nil options: %v", err)
+	}
+
+	if cfg.ErrorHandler != nil || cfg.Logger != nil {
+		t.Fatal("expected untyped nil options to keep fields unset")
+	}
+}
+
+// 直填 Config 字段路径（NewXxxFromConfig）同样必须拦下 typed-nil。
+func TestValidateRejectsTypedNilGroupAggregatorOnConfigLiteral(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.GroupAggregator = (asynq.GroupAggregatorFunc)(nil)
+
+	err := cfg.validate()
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("expected ErrInvalidConfiguration for typed-nil group aggregator, got %v", err)
+	}
+}

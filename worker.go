@@ -218,7 +218,8 @@ func (w *Worker) Start(ctx context.Context) error {
 
 // Run 启动 Worker，并在 ctx 取消后触发 Shutdown。
 // 如果 ctx 取消后关闭成功，Run 返回 nil；调用方需要区分退出原因时应读取 ctx.Err()。
-// Run 触发的关闭流程使用 Config.ShutdownTimeout 作为默认等待预算。
+// Run 触发的关闭流程以 Config.ShutdownTimeout 加余量（其 10%，上限 5 秒）作为默认
+// 等待预算，保证底层任务收尾用满窗口时外层等待不至于先行超时。
 func (w *Worker) Run(ctx context.Context) error {
 	if w == nil {
 		return invalidArgumentError("worker", "must not be nil")
@@ -284,9 +285,5 @@ func (w *Worker) endRegistration() {
 }
 
 func (w *Worker) shutdownContext() (context.Context, context.CancelFunc) {
-	if w.cfg.ShutdownTimeout <= 0 {
-		return context.Background(), func() {}
-	}
-
-	return context.WithTimeout(context.Background(), w.cfg.ShutdownTimeout)
+	return newShutdownContext(w.cfg.ShutdownTimeout)
 }

@@ -249,7 +249,8 @@ func (s *Scheduler) Start(ctx context.Context) error {
 
 // Run 启动调度器，并在 ctx 取消后触发 Shutdown。
 // 如果 ctx 取消后关闭成功，Run 返回 nil；调用方需要区分退出原因时应读取 ctx.Err()。
-// Run 触发的关闭流程使用 Config.ShutdownTimeout 作为默认等待预算。
+// Run 触发的关闭流程以 Config.ShutdownTimeout 加余量（其 10%，上限 5 秒）作为默认
+// 等待预算。
 func (s *Scheduler) Run(ctx context.Context) error {
 	if s == nil {
 		return invalidArgumentError("scheduler", "must not be nil")
@@ -309,9 +310,5 @@ func (s *Scheduler) endOperation() {
 }
 
 func (s *Scheduler) shutdownContext() (context.Context, context.CancelFunc) {
-	if s.cfg.ShutdownTimeout <= 0 {
-		return context.Background(), func() {}
-	}
-
-	return context.WithTimeout(context.Background(), s.cfg.ShutdownTimeout)
+	return newShutdownContext(s.cfg.ShutdownTimeout)
 }

@@ -73,6 +73,10 @@ func (t TaskType[T]) Enqueue(
 	payload T,
 	opts ...TaskOption,
 ) (*asynq.TaskInfo, error) {
+	if isNilInterface(enqueuer) {
+		return nil, invalidArgumentError("enqueuer", "must not be nil")
+	}
+
 	return enqueuer.Enqueue(ctx, t.name, payload, t.mergeOptions(opts)...)
 }
 
@@ -85,17 +89,23 @@ func (t TaskType[T]) Register(
 	payload T,
 	opts ...TaskOption,
 ) (string, error) {
+	if isNilInterface(registrar) {
+		return "", invalidArgumentError("registrar", "must not be nil")
+	}
+
 	return registrar.Register(ctx, spec, t.name, payload, t.mergeOptions(opts)...)
 }
 
 // Handle 使用绑定的任务类型名，通过任意 Registrar（*Worker 或 *App）注册一个带泛型 payload 解码的处理器。
 func (t TaskType[T]) Handle(registrar Registrar, handler func(context.Context, T) error) error {
-	return Handle[T](registrar, t.name, handler)
+	return Handle(registrar, t.name, handler)
 }
 
 // MustHandle 与 Handle 相同，但注册失败时 panic。
-// 注册失败只源于编程错误（重复注册、Worker 已启动、handler 为 nil 等），
 // 与 http.Handle 的惯例一致，适合在程序初始化阶段消除逐个 error 检查的样板。
+// 注册失败通常源于编程错误（重复注册、Worker 已启动、handler 为 nil 等）；
+// 但注意：传入 App 且开启 WithPingOnStart 时，首次注册会懒创建 Worker 并执行 Redis 探活，
+// 探活失败同样会 panic——需要把这类运行环境错误当普通 error 处理时，请改用 Handle。
 func (t TaskType[T]) MustHandle(registrar Registrar, handler func(context.Context, T) error) {
 	err := t.Handle(registrar, handler)
 	if err != nil {

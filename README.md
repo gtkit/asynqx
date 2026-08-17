@@ -675,6 +675,22 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 }
 ```
 
+以下三个哨兵与 asynq 的同名哨兵是同一个错误值（`errors.Is` 双向成立），业务代码无需直接依赖 asynq 包：
+
+- `SkipRetry`：handler 返回包裹它的错误时，任务跳过剩余重试直接归档（终态失败，会被 `NewLogErrorHandler` 记录）
+- `ErrDuplicateTask`：配合 `WithTaskUnique` 时，唯一性窗口内的重复投递以它标识
+- `ErrTaskIDConflict`：配合 `WithTaskID` 时，任务 ID 冲突以它标识
+
+```go
+// handler 主动放弃重试
+return fmt.Errorf("invalid payload: %w", asynqx.SkipRetry)
+
+// 投递端识别去重命中
+if _, err := producer.Enqueue(ctx, taskType, p, asynqx.WithTaskUnique(time.Hour)); errors.Is(err, asynqx.ErrDuplicateTask) {
+	// 唯一性窗口内已有同任务，按业务语义忽略或记录
+}
+```
+
 ## 并发安全说明
 
 - `Producer.Close` 幂等，且关闭后会拒绝新的投递
@@ -694,6 +710,7 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 - 调用方使用 `Run(ctx)` 时，`ctx` 负责“何时开始停机”
 - `Run(ctx)` 进入停机阶段后，默认关闭等待预算来自 `WithShutdownTimeout`
 - 默认 `ShutdownTimeout` 是 `30s`
+- `Run` / `App.Close` 的实际等待预算为 `ShutdownTimeout` 加余量（其 10%，上限 5 秒）：`ShutdownTimeout` 同时是传给底层 asynq 的任务收尾窗口且更晚起算，余量保证任务收尾用满窗口时外层等待不至于先行超时、把已完成的清理误报为超时错误
 - `WithShutdownTimeout(0)` 表示不额外设置默认关闭超时，内部会使用 `context.Background()`
 - 如果 `Run(ctx)` 因 `ctx` 取消而触发停机且关闭成功，返回值是 `nil`；调用方需要区分退出原因时，应在外层读取传入的 `ctx.Err()`
 - `App.Start` 中任一组件启动失败时会回滚已启动的组件（如 Worker 已启动而 Scheduler 启动失败，则先停掉 Worker 再返回错误），不会留下"半启动"状态；返回错误后消费侧应视为不可用，建议 `Close` 后重建或退出进程
@@ -732,6 +749,7 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 ## 生产环境建议
 
 - 明确区分生产者进程、消费者进程、调度进程，不要把所有角色强塞进一个服务
+- 调度进程单实例部署：asynq 的 Scheduler 按 cron 独立触发投递、无跨进程去重，多副本同时运行会把同一周期任务重复投递多份；需要冗余时给周期任务配 `WithTaskID`（固定 ID）或 `WithTaskUnique` 兜底
 - 为不同业务队列配置合理的 `Queues` 权重
 - 配置任务超时、重试次数、唯一窗口，避免无界重试
 - 按业务任务耗时配置 `WithShutdownTimeout`，让优雅停机预算和任务时长匹配
@@ -742,8 +760,9 @@ if errors.Is(err, asynqx.ErrWorkerStopped) {
 - 在服务主进程中使用 `Run(ctx)`，由外层信号管理优雅退出
 
 > 关于失败处理：asynq 会自动 recover handler 中的 panic 并触发重试，因此不必再包一层 recover 中间件。
-> 但当 handler 正常返回 `error` 且**重试次数耗尽**时，若未配置 `ErrorHandler`，这类终态失败不会有任何通知。
-> `NewLogErrorHandler` 仅在最后一次尝试时以 Error 级别记录，避免每次重试都打日志造成噪音。
+> 但当 handler 正常返回 `error` 且**不再有下一次尝试**时，若未配置 `ErrorHandler`，这类终态失败不会有任何通知。
+> `NewLogErrorHandler` 仅在终态失败时以 Error 级别记录——包括重试耗尽，以及返回包裹 `asynq.SkipRetry`
+> 的错误（如 `Handle` 的 payload 解码失败）——重试路径上的失败不打日志，避免噪音。
 
 ## 测试
 
@@ -759,11 +778,17 @@ go test ./...
 go test ./... -race
 ```
 
-如果你要补真实 Redis 集成测试，建议：
+需要真实 Redis 的集成冒烟测试位于 `integration_test.go`（`//go:build integration`），默认构建不包含，显式启用：
 
-- 使用独立的 `integration_test.go`
-- 通过环境变量控制是否启用
-- 不要让默认 `go test ./...` 连接真实 Redis
+```bash
+go test -tags integration -run Integration ./...
+```
+
+Redis 连接通过环境变量配置（默认 `127.0.0.1:6379`、DB 15）；测试会对所选 DB 执行 `FLUSHDB` 以隔离用例，请勿指向生产库。Redis 不可用时集成用例自动 Skip：
+
+```bash
+ASYNQX_TEST_REDIS_ADDR=127.0.0.1:6379 ASYNQX_TEST_REDIS_DB=15 go test -tags integration -run Integration ./...
+```
 
 ## 与旧版本的区别
 
@@ -783,10 +808,6 @@ go test ./... -race
 - 生命周期与并发语义更容易推导
 
 ## FAQ
-
-### 为什么没有“等待任务结果”的同步接口？
-
-因为 `asynq` 的本质是异步任务队列，不是 RPC。同步等待结果很容易把异步系统错误地包装成同步调用，增加 Redis 压力和语义复杂度。业务结果建议由业务侧自行存储和查询。
 
 ### 为什么 `Worker` 启动后不允许继续注册处理器？
 

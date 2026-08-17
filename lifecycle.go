@@ -4,7 +4,28 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 )
+
+// maxShutdownGrace 是停机预算余量的上限。
+const maxShutdownGrace = 5 * time.Second
+
+// newShutdownContext 构造 Run/Close 触发停机时的默认等待 context。
+// 预算为 timeout 加余量（timeout 的 10%，上限 maxShutdownGrace）：传给底层 asynq 的
+// 任务收尾窗口与 timeout 等长且更晚起算，外层等待若不留余量，任务占满窗口时外层必先
+// 到期，导致清理明明完成却返回超时错误。timeout <= 0 表示不设上限。
+func newShutdownContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.Background(), func() {}
+	}
+
+	grace := min(timeout/10, maxShutdownGrace) //nolint:mnd // 余量比例，见上方注释
+
+	// max 兜底：timeout 接近 time.Duration 上限时相加会溢出为负，此时钳回 timeout 本身。
+	budget := max(timeout+grace, timeout)
+
+	return context.WithTimeout(context.Background(), budget)
+}
 
 // 生命周期状态机的五个状态，Worker 与 Scheduler 共用。
 const (

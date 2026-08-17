@@ -3,6 +3,8 @@ package asynqx
 import (
 	"errors"
 	"fmt"
+
+	"github.com/hibiken/asynq"
 )
 
 // ErrInvalidTaskOption 表示任务选项不合法。
@@ -34,6 +36,24 @@ var ErrSchedulerStopped = errors.New("asynqx: scheduler stopped")
 
 // ErrHandlerAlreadyRegistered 表示同一个 taskType 已经注册过处理器。
 var ErrHandlerAlreadyRegistered = errors.New("asynqx: handler already registered")
+
+// SkipRetry 与 asynq.SkipRetry 是同一个哨兵错误：handler 返回包裹它的错误时，
+// 任务跳过剩余重试直接归档（终态失败，会被 NewLogErrorHandler 记录）。
+// 重导出后业务 handler 无需直接依赖 asynq 包：
+//
+//	return fmt.Errorf("invalid payload: %w", asynqx.SkipRetry)
+//
+//nolint:errname // 必须与 asynq.SkipRetry 同名镜像，方便两边对照
+var SkipRetry = asynq.SkipRetry
+
+// ErrDuplicateTask 与 asynq.ErrDuplicateTask 是同一个哨兵错误：配合 WithTaskUnique
+// 投递时，唯一性窗口内的重复任务会使 Enqueue 返回包裹它的错误，
+// 用 errors.Is(err, asynqx.ErrDuplicateTask) 识别去重命中。
+var ErrDuplicateTask = asynq.ErrDuplicateTask
+
+// ErrTaskIDConflict 与 asynq.ErrTaskIDConflict 是同一个哨兵错误：配合 WithTaskID
+// 投递时，任务 ID 与既有任务冲突会使 Enqueue 返回包裹它的错误。
+var ErrTaskIDConflict = asynq.ErrTaskIDConflict
 
 func invalidConfigurationError(field, reason string) error {
 	if reason == "" {

@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.6.0 - 2026-08-17
+
+### Added
+
+- 重导出 asynq 哨兵错误 `SkipRetry` / `ErrDuplicateTask` / `ErrTaskIDConflict`（与 asynq 同值，`errors.Is` 双向成立）：handler 跳过重试、投递端识别唯一任务去重命中与任务 ID 冲突，均无需直接依赖 asynq 包。
+- 新增 `Version` 常量，记录本包最近一次发布的版本号。
+
+### Changed
+
+- `Run`（Worker / Scheduler / App）与 `App.Close` 的停机等待预算改为 `ShutdownTimeout` 加余量（其 10%，上限 5 秒）：`ShutdownTimeout` 同时是传给底层 asynq 的任务收尾窗口且更晚起算，余量避免任务收尾用满窗口时外层等待先行超时、把已完成的清理误报为 `DeadlineExceeded`。`WithShutdownTimeout(0)` 仍表示不设上限；显式 `Shutdown(ctx)` 以调用方 ctx 为准，不受影响。
+- `NewLogErrorHandler` 现在记录全部终态失败：除重试耗尽外，handler 返回包裹 `asynq.SkipRetry` 的错误（如 `Handle` 的 payload 解码失败）也会以 Error 级别记录，日志文案区分 `retries exhausted` / `skip retry`。
+- `MustHandle` GoDoc 补充：经 App 且开启 `WithPingOnStart` 时，首次注册懒创建 Worker 会执行 Redis 探活，探活失败同样 panic；需按普通 error 处理时用 `Handle`。`App.Run` GoDoc 写明启动失败会关闭整个 App（含全部组件与共享连接）。
+- README：生产建议补充调度进程单实例部署约束（asynq Scheduler 按 cron 独立触发投递、无跨进程去重，多副本会重复投递周期任务，可用 `WithTaskID` / `WithTaskUnique` 兜底）；错误说明补充三个重导出哨兵的用法；停机语义补充预算余量说明；测试章节改为描述集成测试的启用方式。
+- 依赖升级：`go-redis/v9` v9.20.1 → v9.22.0，`golang.org/x/sys` v0.46.0 → v0.47.0、`golang.org/x/arch` v0.28.0 → v0.30.0、`bytedance/sonic/loader` v0.5.1 → v0.5.2。
+
+### Fixed
+
+- `TaskType.Enqueue` / `TaskType.Register` 收到 nil（含 typed-nil）接口时返回 `ErrInvalidArgument`，不再 panic，与 `Handle` 的既有防护一致。
+- 配置校验拒绝 typed-nil 的 `ErrorHandler` / `Logger` / `GroupAggregator`：此前这类值能通过构造、运行期首次调用其方法才 panic，现在构造期即返回 `ErrInvalidConfiguration`（untyped nil 仍表示"未设置"，保持合法）。`WithXxx` 选项路径与 `NewXxxFromConfig` 直填路径均覆盖。
+
 ## v1.5.0 - 2026-07-06
 
 ### Added
@@ -38,10 +58,6 @@
 ### Changed
 
 - README 增加"推荐：使用 App"章节，将细粒度的四件套构造器定位为进阶用法。
-
-### 路线图（v2 计划，本次不做以保持向后兼容）
-
-- 选项层瘦身：约三分之一的 `WithXxx` 是 `asynq.Config` 字段的纯透传镜像（如 `WithStrictPriority` / `WithHealthCheckFunc` / `WithDelayedTaskCheckInterval` / `WithGroupMaxDelay` 等），可由 `Config` 字面量替代；Redis 三形态的 clone/validate 样板也较多。这些移除属破坏性变更，计划在 v2 收敛。
 
 ## v1.3.1 - 2026-06-14
 

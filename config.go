@@ -163,6 +163,25 @@ func (c Config) validate() error {
 		return invalidConfigurationError("location", "must not be nil")
 	}
 
+	return c.validateInterfaceFields()
+}
+
+// validateInterfaceFields 拒绝接口字段的 typed-nil：这类值能通过底层 asynq 的
+// != nil 判断，运行期首次调用其方法时才 panic，必须在构造期拦下。
+// untyped nil 表示"未设置"，保持合法。
+func (c Config) validateInterfaceFields() error {
+	if c.ErrorHandler != nil && isNilInterface(c.ErrorHandler) {
+		return invalidConfigurationError("error_handler", "must not be typed nil")
+	}
+
+	if c.Logger != nil && isNilInterface(c.Logger) {
+		return invalidConfigurationError("logger", "must not be typed nil")
+	}
+
+	if c.GroupAggregator != nil && isNilInterface(c.GroupAggregator) {
+		return invalidConfigurationError("group_aggregator", "must not be typed nil")
+	}
+
 	return nil
 }
 

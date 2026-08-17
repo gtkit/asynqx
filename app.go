@@ -237,6 +237,8 @@ func (a *App) Unregister(ctx context.Context, entryID string) error {
 
 // Start 启动消费侧：已通过 Handle 注册处理器的 Worker 与已通过 Register 注册周期任务的
 // Scheduler（非阻塞）。两者都未注册时返回错误，以便尽早发现误用。
+// 应在完成全部 Handle / Register 注册后再调用：与注册并发执行时，
+// Start 可能看不到正在创建中的组件。
 //
 // 任一组件启动失败时会回滚已启动的组件，不会留下"半启动"状态在后台继续消费；
 // 返回错误后 App 的消费侧应视为不可用，调用方应 Close 后重建或退出进程。
@@ -273,8 +275,9 @@ func (a *App) Start(ctx context.Context) error {
 	return nil
 }
 
-// Run 启动消费侧并阻塞至 ctx 取消，然后按 Config.ShutdownTimeout 优雅关闭全部组件与连接。
-// 启动失败时会清理已启动的组件后返回错误。
+// Run 启动消费侧并阻塞至 ctx 取消，然后以 Config.ShutdownTimeout 加余量（其 10%，
+// 上限 5 秒）为预算优雅关闭全部组件与连接。
+// 启动失败时会关闭整个 App（包括已创建的全部组件与共享连接）后返回错误，App 此后不可复用。
 func (a *App) Run(ctx context.Context) error {
 	if a == nil {
 		return invalidArgumentError("app", "must not be nil")
@@ -330,7 +333,8 @@ func (a *App) Shutdown(ctx context.Context) error {
 	return a.closeErr
 }
 
-// Close 以 Config.ShutdownTimeout 为预算优雅关闭 App，等价于 Shutdown。重复调用安全。
+// Close 以 Config.ShutdownTimeout 加余量（其 10%，上限 5 秒）为预算优雅关闭 App，
+// 等价于 Shutdown。重复调用安全。
 func (a *App) Close() error {
 	if a == nil {
 		return nil
@@ -361,11 +365,7 @@ func (a *App) rollbackWorker(worker *Worker, startErr error) error {
 }
 
 func (a *App) shutdownContext() (context.Context, context.CancelFunc) {
-	if a.cfg.ShutdownTimeout <= 0 {
-		return context.Background(), func() {}
-	}
-
-	return context.WithTimeout(context.Background(), a.cfg.ShutdownTimeout)
+	return newShutdownContext(a.cfg.ShutdownTimeout)
 }
 
 // shutdownComponents 按"先消费侧、再投递侧、最后共享连接"的顺序关闭并聚合错误。
